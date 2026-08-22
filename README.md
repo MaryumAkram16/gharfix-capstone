@@ -88,6 +88,8 @@ External Services
 5. Run the app:
    `npm run dev`
 
+The server runs on port 3000 by default. If that port is already in use, free it or stop the conflicting process before running `npm run dev`.
+
 ---
 
 ## 5. System Orchestration — Frontend Routing to n8n Agent Workflows

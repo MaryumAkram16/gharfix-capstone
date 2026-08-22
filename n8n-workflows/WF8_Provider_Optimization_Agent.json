@@ -93,20 +93,14 @@
         "headerParameters": {
           "parameters": [
             {
-              "name": "apikey",
-              "value": "YOUR_SUPABASE_ANON_KEY"
-            },
-            {
-              "name": "Authorization",
-              "value": "YOUR_SUPABASE_ANON_KEY"
-            },
-            {
               "name": "Content-Type",
               "value": "application/json"
             }
           ]
         },
-        "options": {}
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "85bf8dfe-795c-48b2-92c7-50b81e1cb58f",
       "name": "Fetch Platform Bookings",
@@ -116,7 +110,13 @@
         0,
         1056
       ],
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Supabase Anon Key"
+        }
+      }
     },
     {
       "parameters": {
@@ -125,20 +125,14 @@
         "headerParameters": {
           "parameters": [
             {
-              "name": "apikey",
-              "value": "YOUR_SUPABASE_ANON_KEY"
-            },
-            {
-              "name": "Authorization",
-              "value": "YOUR_SUPABASE_ANON_KEY"
-            },
-            {
               "name": "Content-Type",
               "value": "application/json"
             }
           ]
         },
-        "options": {}
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "6aa2a01f-e839-4c9a-b836-4de3d40969a6",
       "name": "Fetch Provider Bookings",
@@ -148,7 +142,13 @@
         -336,
         1056
       ],
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Supabase Anon Key"
+        }
+      }
     },
     {
       "parameters": {
