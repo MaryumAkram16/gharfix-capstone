@@ -1,0 +1,6 @@
+{
+  "name": "KhidmatGaar",
+  "description": "Your trusted partner for home services in Pakistan. Book plumbers, electricians, and more with AI ease.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

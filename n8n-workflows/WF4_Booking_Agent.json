@@ -1,0 +1,576 @@
+{
+  "name": "Khidmat AI —Booking Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "khadmat-booking",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "156a64a9-c746-4b7f-a899-85fb0b097f46",
+      "name": "WF4 — HTTP Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        2752,
+        1264
+      ],
+      "webhookId": "792a28b4-b558-4230-9571-ed050c27aab2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF4 — ROUTER: Detect Step A or Step B\n// Step A = { action: 'get_slots', provider_id, booking_date, availability_slots }\n// Step B = { action: 'confirm', provider_id, slot, booking_date, ... }\n// ============================================================\nconst body = $input.first().json.body;\nconst action = body.action || 'get_slots';\nconsole.log('=== WF4 Router ===');\nconsole.log('Action:', action);\nconsole.log('Body:', JSON.stringify(body));\nreturn [{ json: { ...body, action } }];"
+      },
+      "id": "4bf44dc7-7e12-4b8d-9518-5acbef7ae881",
+      "name": "Detect Step A or Step B",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2976,
+        1264
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "action-check",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "get_slots",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b37101d7-69b6-4ee4-810d-32e3e6b52b27",
+      "name": "Step A or Step B?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3200,
+        1264
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings?provider_id=eq.{{ $json.place_id || $json.provider_id }}&booking_date=eq.{{ $json.booking_date }}&status=in.(confirmed,in_progress)&select=slot,status",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1dbc61d6-3850-442e-bd8e-6aaf1270c5e3",
+      "name": "Step A — Get Booked Slots",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3424,
+        1168
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF4 STEP A — Build Available Slot List with Travel-Time Buffer\n// ============================================================\nconst requestData = $('Detect Step A or Step B').first().json;\nconst supabaseRows = $input.all();\n\n// ── Service duration map (minutes) ───────────────────────────\n// Covers the actual job time + 30-min travel/cleanup buffer\nconst SERVICE_DURATIONS = {\n  'ac repair':              120,\n  'ac installation':        180,\n  'ac gas refill':           90,\n  'plumber':                 90,\n  'electrician':            120,\n  'carpenter':              180,\n  'painter':                240,\n  'tutor':                   60,\n  'beautician':             120,\n  'generator mechanic':     120,\n  'fridge repair':          120,\n  'washing machine repair': 120,\n  'geyser repair':           90,\n  'solar installation':     300,\n  'pest control':           120,\n  'deep cleaning':          240,\n  'default':                 90\n};\n\nconst TRAVEL_BUFFER_MINS = 30;\n\n// Look up duration for this service type\nconst serviceKey = (requestData.service_type || '').toLowerCase();\nconst matchedKey = Object.keys(SERVICE_DURATIONS).find(k => serviceKey.includes(k));\nconst jobDurationMins = SERVICE_DURATIONS[matchedKey] || SERVICE_DURATIONS['default'];\nconst totalBlockMins = jobDurationMins + TRAVEL_BUFFER_MINS;\n\n// ── Parse slot string → minutes since midnight ────────────────\nfunction slotToMins(slotStr) {\n  if (!slotStr) return null;\n  // Handle \"11:00 AM\" / \"2:00 PM\" / \"14:00\" formats\n  const upper = slotStr.toUpperCase().trim();\n  const isPM = upper.includes('PM');\n  const isAM = upper.includes('AM');\n  const clean = upper.replace('AM', '').replace('PM', '').trim();\n  const [hStr, mStr] = clean.split(':');\n  let h = parseInt(hStr);\n  const m = parseInt(mStr) || 0;\n  if (isPM && h !== 12) h += 12;\n  if (isAM && h === 12) h = 0;\n  return h * 60 + m;\n}\n\nfunction formatSlotLabel(time) {\n  const [h, m] = time.split(':').map(Number);\n  const period = h >= 12 ? 'PM' : 'AM';\n  const hour = h > 12 ? h - 12 : h === 0 ? 12 : h;\n  return `${hour}:${String(m).padStart(2, '0')} ${period}`;\n}\n\n// ── Get booked slots from Supabase ────────────────────────────\nconst bookedInDb = supabaseRows\n  .map(row => row.json?.slot)\n  .filter(Boolean);\n\nconst bookedMins = bookedInDb.map(s => slotToMins(s)).filter(v => v !== null);\n\n// ── All possible slots for this provider ──────────────────────\nconst allSlots = requestData.availability_slots ||\n  ['09:00', '10:00', '11:00', '12:00', '14:00', '15:00', '16:00', '17:00'];\n\n// ── Seed-based randomisation (simulates offline bookings) ─────\nconst seed = requestData.place_id || requestData.provider_id || 'default_seed';\n\nconst slotList = allSlots.map((slot, index) => {\n  const slotMins = slotToMins(slot);\n\n  // Is this slot already directly booked in DB?\n  const directlyBooked = bookedInDb.includes(slot);\n\n  // Does this slot fall inside the buffer window of ANY booked slot?\n  // i.e. a booked slot at T blocks slots from T to T+totalBlockMins\n  const blockedByBuffer = bookedMins.some(bookedStart => {\n    return slotMins > bookedStart && slotMins < bookedStart + totalBlockMins;\n  });\n\n  // Also block if THIS slot being booked would overlap a later booked slot\n  // i.e. if booking at slotMins would still be running when bookedStart begins\n  const wouldOverlapNext = bookedMins.some(bookedStart => {\n    return slotMins < bookedStart && slotMins + totalBlockMins > bookedStart;\n  });\n\n  // Seed-based pseudo-random offline bookings (~20% of slots)\n  const isRandomlyBusy = (seed.charCodeAt(index % seed.length) % 5) === 0;\n\n  const isAvailable = !directlyBooked && !blockedByBuffer && !wouldOverlapNext && !isRandomlyBusy;\n\n  return {\n    time: slot,\n    label: formatSlotLabel(slot),\n    available: isAvailable,\n    blocked_reason: directlyBooked ? 'booked'\n      : blockedByBuffer ? `within ${totalBlockMins}min buffer of earlier booking`\n      : wouldOverlapNext ? `would overlap next booking`\n      : isRandomlyBusy ? 'offline'\n      : null\n  };\n});\n\nconst freeSlots = slotList.filter(s => s.available);\n\nreturn [{ json: {\n  status: 'slots_ready',\n  action: 'get_slots',\n  provider_id: requestData.place_id || requestData.provider_id,\n  provider_name: requestData.provider_name,\n  service_type: requestData.service_type,\n  location: requestData.location,\n  price_pkr: parseInt(requestData.price_pkr) || 0,\n  booking_date: requestData.booking_date,\n  availability_slots: allSlots,\n  slots: slotList,\n  free_count: freeSlots.length,\n  booked_count: bookedInDb.length,\n  job_duration_mins: jobDurationMins,\n  travel_buffer_mins: TRAVEL_BUFFER_MINS,\n  total_block_mins: totalBlockMins,\n  message: freeSlots.length === 0\n    ? 'Koi slot available nahi hai is date pe.'\n    : `${freeSlots.length} slot(s) available — slot chunein`,\n  workflow: 'WF4-StepA'\n}}];"
+      },
+      "id": "fb896007-ed87-460f-addd-fe9dc3005ca4",
+      "name": "Step A — Build Slot List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3648,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "8329db2d-c456-4a1c-8dbf-cf60ff657f04",
+      "name": "Step A — Respond with Slots",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3872,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF4 STEP B — Validate Confirm Request with Buffer Check\n// ============================================================\nconst body = $input.first().json;\n\nconst required = [\n  'provider_id', 'provider_name',\n  'service_type', 'location',\n  'price_pkr', 'slot', 'booking_date'\n];\n\nconst effectiveProviderId = body.provider_id || body.place_id;\nconst missing = required.filter(f => f === 'provider_id' ? !effectiveProviderId : !body[f]);\n\nif (missing.length > 0) {\n  return [{ json: {\n    status: 'validation_error',\n    message: `Missing fields: ${missing.join(', ')}`,\n    received: body\n  }}];\n}\n\n// ── Same duration map as Step A ───────────────────────────────\nconst SERVICE_DURATIONS = {\n  'ac repair':              120,\n  'ac installation':        180,\n  'ac gas refill':           90,\n  'plumber':                 90,\n  'electrician':            120,\n  'carpenter':              180,\n  'painter':                240,\n  'tutor':                   60,\n  'beautician':             120,\n  'generator mechanic':     120,\n  'fridge repair':          120,\n  'washing machine repair': 120,\n  'geyser repair':           90,\n  'solar installation':     300,\n  'pest control':           120,\n  'deep cleaning':          240,\n  'default':                 90\n};\n\nconst TRAVEL_BUFFER_MINS = 30;\n\nfunction slotToMins(slotStr) {\n  if (!slotStr) return null;\n  const upper = slotStr.toUpperCase().trim();\n  const isPM = upper.includes('PM');\n  const isAM = upper.includes('AM');\n  const clean = upper.replace('AM', '').replace('PM', '').trim();\n  const [hStr, mStr] = clean.split(':');\n  let h = parseInt(hStr);\n  const m = parseInt(mStr) || 0;\n  if (isPM && h !== 12) h += 12;\n  if (isAM && h === 12) h = 0;\n  return h * 60 + m;\n}\n\nconst serviceKey = (body.service_type || '').toLowerCase();\nconst matchedKey = Object.keys(SERVICE_DURATIONS).find(k => serviceKey.includes(k));\nconst jobDurationMins = SERVICE_DURATIONS[matchedKey] || SERVICE_DURATIONS['default'];\nconst totalBlockMins = jobDurationMins + TRAVEL_BUFFER_MINS;\n\nconst timestamp = Date.now();\nconst random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');\nconst bookingId = `BK-${new Date().getFullYear()}-${timestamp}-${random}`;\n\nconsole.log('=== WF4 Step B — Confirming Booking ===');\nconsole.log('Booking ID:', bookingId);\nconsole.log('Provider ID:', effectiveProviderId);\nconsole.log('Slot:', body.slot, 'on', body.booking_date);\nconsole.log('Job duration:', jobDurationMins, 'mins + buffer:', TRAVEL_BUFFER_MINS, 'mins');\n\nreturn [{ json: {\n  ...body,\n  provider_id: effectiveProviderId,\n  price_pkr: parseInt(body.price_pkr) || 0,\n  booking_id: bookingId,\n  user_name: body.user_name || 'Guest User',\n  job_duration_mins: jobDurationMins,\n  travel_buffer_mins: TRAVEL_BUFFER_MINS,\n  total_block_mins: totalBlockMins,\n  requested_slot_mins: slotToMins(body.slot)\n}}];"
+      },
+      "id": "039e3f5e-15ab-490e-9277-1c15fa59a588",
+      "name": "Step B — Validate Confirm Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3424,
+        1360
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings?provider_id=eq.{{ $json.provider_id }}&booking_date=eq.{{ $json.booking_date }}&slot=eq.{{ $json.slot }}&status=in.(confirmed,in_progress)&select=booking_id,slot,status",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b97597da-ed1b-4402-a5e4-0826f175789d",
+      "name": "Step B — Race Condition Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3648,
+        1360
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF4 STEP B — Check if slot was grabbed by someone else\n// Now also checks travel-time buffer conflicts\n// ============================================================\nconst bookingData = $('Step B — Validate Confirm Request').first().json;\nconst supabaseRows = $input.all();\n\n// ── Parse slot string → minutes since midnight ────────────────\nfunction slotToMins(slotStr) {\n  if (!slotStr) return null;\n  const upper = slotStr.toUpperCase().trim();\n  const isPM = upper.includes('PM');\n  const isAM = upper.includes('AM');\n  const clean = upper.replace('AM', '').replace('PM', '').trim();\n  const [hStr, mStr] = clean.split(':');\n  let h = parseInt(hStr);\n  const m = parseInt(mStr) || 0;\n  if (isPM && h !== 12) h += 12;\n  if (isAM && h === 12) h = 0;\n  return h * 60 + m;\n}\n\n// Check for exact slot match (race condition)\nconst exactSlotTaken = supabaseRows.some(row => row.json && row.json.booking_id);\n\n// Check for buffer conflict against any confirmed bookings returned\nconst requestedMins = bookingData.requested_slot_mins\n  || slotToMins(bookingData.slot);\nconst totalBlockMins = bookingData.total_block_mins || 120;\n\nconst bufferConflict = supabaseRows.some(row => {\n  if (!row.json?.slot) return false;\n  const existingMins = slotToMins(row.json.slot);\n  if (existingMins === null) return false;\n  // Existing booking blocks our slot\n  const existingBlocks = requestedMins > existingMins\n    && requestedMins < existingMins + totalBlockMins;\n  // Our booking would still be running when existing starts\n  const weBlockExisting = requestedMins < existingMins\n    && requestedMins + totalBlockMins > existingMins;\n  return existingBlocks || weBlockExisting;\n});\n\nconst slotTaken = exactSlotTaken || bufferConflict;\n\nconsole.log('Race condition check:');\nconsole.log('  Exact slot taken:', exactSlotTaken);\nconsole.log('  Buffer conflict:', bufferConflict);\nconsole.log('  Requested slot:', bookingData.slot, '(' + requestedMins + ' mins)');\nconsole.log('  Block window:', totalBlockMins, 'mins');\n\nif (slotTaken) {\n  const reason = bufferConflict\n    ? `Slot conflicts with an existing booking's service window (${totalBlockMins} min block)`\n    : 'Slot was just booked by another user';\n\n  console.log('CONFLICT:', reason);\n  return [{ json: {\n    status: 'slot_taken',\n    slot_requested: bookingData.slot,\n    provider_name: bookingData.provider_name,\n    booking_date: bookingData.booking_date,\n    conflict_reason: reason,\n    message: 'Yeh slot abhi kisi aur ne book kar liya. Kripya doosra slot chunein.',\n    trigger_reslot: true,\n    provider_id: bookingData.provider_id,\n    availability_slots: bookingData.availability_slots\n  }}];\n}\n\nreturn [{ json: { ...bookingData, slot_status: 'free' } }];"
+      },
+      "id": "c03b2ca7-ac83-41a5-95f1-25416951ba9a",
+      "name": "Step B — Is Slot Still Free?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3872,
+        1360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "slot-free-check",
+              "leftValue": "={{ $json.slot_status }}",
+              "rightValue": "free",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e3dd96a8-d4c5-4f9f-94f4-8a7e272d80c2",
+      "name": "Slot Still Free?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4096,
+        1360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"booking_id\": \"{{ $json.booking_id }}\",\n  \"user_name\": \"{{ $json.user_name }}\",\n  \"service_type\": \"{{ $json.service_type }}\",\n  \"provider_id\": \"{{ $json.provider_id }}\",\n  \"provider_name\": \"{{ $json.provider_name }}\",\n  \"location\": \"{{ $json.location }}\",\n  \"slot\": \"{{ $json.slot }}\",\n  \"booking_date\": \"{{ $json.booking_date }}\",\n  \"price_pkr\": {{ $json.price_pkr }},\n  \"status\": \"confirmed\",\n  \"user_email\": \"{{ $json.user_email }}\",\n  \"provider_rating\": {{ $json.rating || $json.provider_rating || 'null' }},\n  \"provider_review_count\": {{ $json.review_count || $json.provider_review_count || 'null' }},\n  \"provider_address\": \"{{ $json.address || $json.provider_address || '' }}\",\n  \"provider_distance_km\": {{ $json.distance_km || $json.provider_distance_km || 'null' }},\n  \"provider_reputation_score\": {{ $json.reputation_score || $json.provider_reputation_score || 'null' }},\n  \"provider_verified\": {{ $json.verified || false }},\n  \"provider_google_maps_url\": \"{{ $json.google_maps_url || $json.provider_google_maps_url || '' }}\",\n  \"provider_coordinates_lat\": {{ ($json.coordinates && $json.coordinates.lat) ? $json.coordinates.lat : 'null' }},\n  \"provider_coordinates_lng\": {{ ($json.coordinates && $json.coordinates.lng) ? $json.coordinates.lng : 'null' }}\n}",
+        "options": {}
+      },
+      "id": "42c0a47d-4de9-4fbd-9346-c66417933ff4",
+      "name": "Step B — Insert Booking (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4320,
+        1264
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF4 STEP B — Generate Confirmation Receipt\n// ============================================================\n\nconst bookingData = $('Step B — Is Slot Still Free?').first().json;\n\nfunction formatSlotLabel(time) {\n  const [h, m] = time.split(':').map(Number);\n  const period = h >= 12 ? 'PM' : 'AM';\n  const hour = h > 12 ? h - 12 : h === 0 ? 12 : h;\n  return `${hour}:${String(m).padStart(2, '0')} ${period}`;\n}\n\nconst receipt = {\n  booking_id: bookingData.booking_id,\n  status: 'confirmed',\n  service: bookingData.service_type,\n  provider: {\n    id: bookingData.provider_id,\n    name: bookingData.provider_name\n  },\n  appointment: {\n    date: bookingData.booking_date,\n    time: bookingData.slot,\n    time_label: formatSlotLabel(bookingData.slot),\n    location: bookingData.location\n  },\n  payment: {\n    estimated_pkr: bookingData.price_pkr,\n    method: 'Cash on service',\n    note: 'Final price may vary based on actual work done'\n  },\n  customer: {\n    name: bookingData.user_name,\n    email: bookingData.user_email  // Include user_email here\n  },\n  confirmation_lines: [\n    `✅ Booking confirmed!`,\n    `🎫 ID: ${bookingData.booking_id}`,\n    `📅 ${bookingData.booking_date} at ${formatSlotLabel(bookingData.slot)}`,\n    `👷 ${bookingData.provider_name}`,\n    `📍 ${bookingData.location}`,\n    `💰 PKR ${bookingData.price_pkr}`,\n    `📱 Provider will call 30 min before arrival`,\n    `📧 Email: ${bookingData.user_email}`  // Optional, include in confirmation lines if needed\n  ],\n  simulated_whatsapp:\n    `Assalam o Alaikum! Aapki booking confirm ho gayi.\\n` +\n    `🎫 ID: ${bookingData.booking_id}\\n` +\n    `🔧 Service: ${bookingData.service_type}\\n` +\n    `👷 Provider: ${bookingData.provider_name}\\n` +\n    `📅 ${bookingData.booking_date} at ${formatSlotLabel(bookingData.slot)}\\n` +\n    `💰 PKR ${bookingData.price_pkr} (cash on delivery)\\n` +\n    `📧 Email: ${bookingData.user_email}\\n` +  // Optional, include in WhatsApp text if needed\n    `Shukriya! — Khadmat AI`,\n  next_steps: [\n    'Provider will call you 1 hour before arrival',\n    'Keep your phone available',\n    'Pay in cash after service is done'\n  ],\n  workflow: 'WF4-StepB',\n  created_at: new Date().toISOString()\n};\n\nconsole.log('=== Booking Confirmed ===');\nconsole.log('ID:', receipt.booking_id);\nreturn [{ json: receipt }];"
+      },
+      "id": "04507f02-7487-42e9-a5fe-de8110c0a616",
+      "name": "Step B — Generate Receipt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4544,
+        1264
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "17868f6f-0062-4488-98b1-43e5a9b3f641",
+      "name": "Step B — Respond Confirmed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        4720,
+        1264
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF4 STEP B — Slot Taken Fallback\n// Triggered when race condition detected\n// ============================================================\nconst data = $input.first().json;\n\nconsole.log('=== Slot Taken Fallback ===');\nconsole.log('Slot:', data.slot_requested);\n\nconst alternatives = [1, 2, 3].map(daysAhead => {\n  const d = new Date();\n  d.setDate(d.getDate() + daysAhead);\n  const dateStr =\n    d.getFullYear() + '-' +\n    String(d.getMonth() + 1).padStart(2, '0') + '-' +\n    String(d.getDate()).padStart(2, '0');\n  return {\n    date: dateStr,\n    label: daysAhead === 1 ? 'Kal (Tomorrow)'\n         : daysAhead === 2 ? 'Parson'\n         : '3 din baad',\n    slots: ['09:00', '10:00', '14:00']\n  };\n});\n\nreturn [{ json: {\n  status: 'slot_taken',\n  message: data.message,\n  slot_requested: data.slot_requested,\n  provider_name: data.provider_name,\n  booking_date: data.booking_date,\n  action_required: 'get_slots',\n  hint: 'Call get_slots again to see updated availability',\n  alternative_dates: alternatives,\n  waitlist: {\n    available: true,\n    message: 'Waitlist mein add kar dein? Slot khali hone par inform kar denge.'\n  },\n  workflow: 'WF4-SlotTakenFallback',\n  timestamp: new Date().toISOString()\n}}];"
+      },
+      "id": "aa98e94c-e25d-47b5-9214-ff5fa60f58de",
+      "name": "Step B — Slot Taken Fallback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4320,
+        1456
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "c52845b4-f215-4add-9669-b18f2e7ce60b",
+      "name": "Step B — Respond Slot Taken",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        4544,
+        1456
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.customer.email }}",
+        "subject": "=Your GharFix Booking is Confirmed! (Booking ID: {{ $json.booking_id }})",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\">\n</head>\n<body style=\"font-family: Arial, sans-serif; font-size: 15px; color: #333333; line-height: 1.6; padding: 20px;\">\n  <div style=\"max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;\">\n\n    <h2 style=\"color: #2c5aa0;\">Booking Confirmed! 🎉</h2>\n\n    <p>Dear {{ $json.customer.name | 'Valued Customer' }},</p>\n\n    <p>Your GharFix booking has been successfully confirmed!</p>\n\n    <hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\">\n\n    <h3 style=\"color: #2c5aa0;\">Booking Details:</h3>\n\n    <table style=\"width: 100%;\">\n      <tr>\n        <td style=\"padding: 4px 12px 4px 0;\"><strong>Booking ID:</strong></td>\n        <td style=\"padding: 4px 0;\">{{ $json.booking_id }}</td>\n      </tr>\n      <tr>\n        <td style=\"padding: 4px 12px 4px 0;\"><strong>Service:</strong></td>\n        <td style=\"padding: 4px 0;\">{{ $json.service }}</td>\n      </tr>\n      <tr>\n        <td style=\"padding: 4px 12px 4px 0;\"><strong>Provider:</strong></td>\n        <td style=\"padding: 4px 0;\">{{ $json.provider.name }}</td>\n      </tr>\n      <tr>\n        <td style=\"padding: 4px 12px 4px 0;\"><strong>Date:</strong></td>\n        <td style=\"padding: 4px 0;\">{{ $json.appointment.date }}</td>\n      </tr>\n      <tr>\n        <td style=\"padding: 4px 12px 4px 0;\"><strong>Time:</strong></td>\n        <td style=\"padding: 4px 0;\">{{ $json.appointment.time_label }}</td>\n      </tr>\n      <tr>\n        <td style=\"padding: 4px 12px 4px 0;\"><strong>Location:</strong></td>\n        <td style=\"padding: 4px 0;\">{{ $json.appointment.location }}</td>\n      </tr>\n      <tr>\n        <td style=\"padding: 4px 12px 4px 0;\"><strong>Estimated Price:</strong></td>\n        <td style=\"padding: 4px 0;\">PKR {{ $json.payment.estimated_pkr }}</td>\n      </tr>\n    </table>\n\n    <hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\">\n\n    <p><strong>Next Steps:</strong><br>\n    {{ $json.next_steps }}</p>\n\n    <p>Please ensure you are available.</p>\n\n    <p style=\"margin-top: 30px;\">Thank you for choosing GharFix!</p>\n\n    <p style=\"margin-top: 30px;\">\n      Sincerely,<br>\n      <strong>The GharFix Team</strong>\n    </p>\n\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        4912,
+        1264
+      ],
+      "id": "11eb4bad-9054-4171-9c36-ff8c818e5524",
+      "name": "Send a message",
+      "webhookId": "a2ad2f3c-25e1-4ff1-aa5a-8e42b5a630f7",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "nTOYRDSTzQdF6yEt",
+          "name": "gharfix end email"
+        }
+      }
+    }
+  ],
+  "pinData": {
+    "WF4 — HTTP Trigger": [
+      {
+        "json": {
+          "headers": {
+            "host": "n8ndigitalstudio.duckdns.org",
+            "x-real-ip": "34.96.40.184",
+            "x-forwarded-for": "34.96.40.184",
+            "x-forwarded-proto": "https",
+            "connection": "upgrade",
+            "content-length": "278",
+            "content-type": "application/json",
+            "accept": "*/*",
+            "accept-language": "*",
+            "sec-fetch-mode": "cors",
+            "user-agent": "node",
+            "accept-encoding": "br, gzip, deflate"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "action": "confirm",
+            "provider_id": "ChIJ8d6YZVuX3zgRUgFl0JnEe4Y",
+            "provider_name": "Sculpt face & body aesthetics",
+            "service_type": "facial",
+            "location": "G-13 Islamabad",
+            "price_pkr": 900,
+            "slot": "09:00",
+            "booking_date": "2026-05-22",
+            "user_name": "Maryum",
+            "user_email": "maryumc6@gmail.com"
+          },
+          "webhookUrl": "https://n8ndigitalstudio.duckdns.org/webhook/khadmat-booking",
+          "executionMode": "production"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "WF4 — HTTP Trigger": {
+      "main": [
+        [
+          {
+            "node": "Detect Step A or Step B",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Step A or Step B": {
+      "main": [
+        [
+          {
+            "node": "Step A or Step B?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step A or Step B?": {
+      "main": [
+        [
+          {
+            "node": "Step A — Get Booked Slots",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Step B — Validate Confirm Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step A — Get Booked Slots": {
+      "main": [
+        [
+          {
+            "node": "Step A — Build Slot List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step A — Build Slot List": {
+      "main": [
+        [
+          {
+            "node": "Step A — Respond with Slots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step B — Validate Confirm Request": {
+      "main": [
+        [
+          {
+            "node": "Step B — Race Condition Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step B — Race Condition Check": {
+      "main": [
+        [
+          {
+            "node": "Step B — Is Slot Still Free?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step B — Is Slot Still Free?": {
+      "main": [
+        [
+          {
+            "node": "Slot Still Free?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slot Still Free?": {
+      "main": [
+        [
+          {
+            "node": "Step B — Insert Booking (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Step B — Slot Taken Fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step B — Insert Booking (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Step B — Generate Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step B — Generate Receipt": {
+      "main": [
+        [
+          {
+            "node": "Step B — Respond Confirmed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step B — Slot Taken Fallback": {
+      "main": [
+        [
+          {
+            "node": "Step B — Respond Slot Taken",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step B — Respond Confirmed": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "b4c484cc-b0e6-4201-b4ad-2d44f9c833ac",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4849cacf29ece9bf383abb54fb2646c4bb8efa5b8d10cc48771c12ba3d91b0b0"
+  },
+  "id": "zyxEgwrw2hfHGlp3",
+  "tags": [
+    {
+      "updatedAt": "2026-05-15T20:17:04.638Z",
+      "createdAt": "2026-05-15T20:17:04.638Z",
+      "id": "7TIUqObclsfafZNc",
+      "name": "Hackathon"
+    },
+    {
+      "updatedAt": "2026-05-15T20:17:04.629Z",
+      "createdAt": "2026-05-15T20:17:04.629Z",
+      "id": "TQ0mNmjGv8rqs8UG",
+      "name": "Khadmat AI"
+    }
+  ]
+}

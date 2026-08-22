@@ -1,0 +1,839 @@
+{
+  "name": "Khadmat AI — Dispute & Escalation Handler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "khadmat-dispute",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "6ef249d6-cd41-44cb-9734-711903b80fa2",
+      "name": "WF6 — HTTP Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        976
+      ],
+      "webhookId": "81fda46d-6b68-44fb-9b53-a610eba08675"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF6 — ROUTER\n// Reads dispute_type and routes to correct handler branch.\n//\n// Supported dispute_type values:\n//   'no_show'            → provider never arrived\n//   'provider_cancelled' → provider cancelled after confirmation\n//   'quality_complaint'  → bad work / auto-escalated from WF5\n//   'price_disagreement' → customer charged more than quoted\n//   'overrun'            → job took longer, extra charges disputed\n// ============================================================\nconst body = $input.first().json.body || $input.first().json;\n\nconst validTypes = [\n  'no_show',\n  'provider_cancelled',\n  'quality_complaint',\n  'price_disagreement',\n  'overrun'\n];\n\nconst disputeType = body.dispute_type || 'quality_complaint';\n\nif (!validTypes.includes(disputeType)) {\n  return [{ json: {\n    status: 'error',\n    message: `Invalid dispute_type '${disputeType}'. Must be one of: ${validTypes.join(', ')}`,\n    workflow: 'WF6-Router'\n  }}];\n}\n\nif (!body.booking_id) {\n  return [{ json: {\n    status: 'error',\n    message: 'booking_id is required',\n    workflow: 'WF6-Router'\n  }}];\n}\n\nconsole.log('=== WF6 Dispute Router ===');\nconsole.log('Type:', disputeType);\nconsole.log('Booking:', body.booking_id);\nconsole.log('Auto-escalated from WF5:', body.auto_escalated || false);\n\nreturn [{ json: { ...body, dispute_type: disputeType } }];"
+      },
+      "id": "0dc5b65b-c081-4ce8-8f66-243795230779",
+      "name": "WF6 — Router",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        144,
+        976
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "type-no-show",
+              "leftValue": "={{ $json.dispute_type }}",
+              "rightValue": "no_show",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "acb4f8ad-3b11-4b33-ac30-7d69c0a6c282",
+      "name": "Is No Show?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        368,
+        976
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF6 — NO SHOW HANDLER\n// Provider never arrived at the booked time.\n// Decision: full refund eligibility + provider penalty + reschedule offer.\n// ============================================================\nconst data = $('WF6 — Router').first().json;\nconst now = new Date();\n\n// Penalty logic: first offence = warning, repeat = suspension\nconst cancellationRate = parseFloat(data.provider_cancellation_rate) || 0.12;\nconst isRepeatOffender = cancellationRate > 0.20;\n\nconst penalty = isRepeatOffender\n  ? 'SUSPENDED — Provider removed from active pool pending review'\n  : 'WARNING — Strike added to provider record. 3 strikes = suspension.';\n\nconst resolution = {\n  status: 'dispute_resolved',\n  dispute_type: 'no_show',\n  booking_id: data.booking_id,\n  provider_name: data.provider_name,\n  provider_id: data.provider_id,\n  user_email: data.user_email,\n  resolution: 'no_show_confirmed',\n  decision: {\n    refund: {\n      eligible: true,\n      amount_pkr: data.price_pkr || 0,\n      method: 'Credit to next booking or cash refund',\n      note: 'Full refund approved — provider did not show up'\n    },\n    provider_action: {\n      penalty: penalty,\n      cancellation_rate_updated: Math.min(1, cancellationRate + 0.10),\n      blacklisted: isRepeatOffender,\n      matching_impact: isRepeatOffender\n        ? 'Provider BLACKLISTED — will not appear in future WF2 results'\n        : 'Provider score penalized — lower priority in future matches'\n    },\n    reschedule_offer: {\n      available: true,\n      message: 'Kya aap doosre provider ke saath reschedule karna chahte hain?',\n      action: 'POST to khadmat-booking with action: get_slots and new provider details'\n    }\n  },\n  antigravity_trace: {\n    reasoning: `No-show detected for booking ${data.booking_id}. Provider ${data.provider_name} did not arrive. Cancellation rate: ${(cancellationRate * 100).toFixed(0)}%. Decision: ${isRepeatOffender ? 'Blacklist + full refund' : 'Warning + full refund + reschedule offer'}.`,\n    confidence: 95,\n    escalate_to_human: isRepeatOffender\n  },\n  customer_message:\n    `Humein afsos hai ke ${data.provider_name} nahi aaye.\\n` +\n    `Aapka PKR ${data.price_pkr || 0} refund process ho raha hai.\\n` +\n    `Hum aapko ek naya provider dhundh ke denge — koi extra charge nahi.`,\n  simulated_whatsapp:\n    `No-Show Alert — Khadmat AI\\n` +\n    `Booking: ${data.booking_id}\\n` +\n    `Provider ${data.provider_name} nahi pahunche.\\n` +\n    `Full refund approved: PKR ${data.price_pkr || 0}\\n` +\n    `Reschedule ke liye reply karein.`,\n  workflow: 'WF6-NoShow',\n  timestamp: now.toISOString()\n};\n\nconsole.log('=== WF6 No Show ===');\nconsole.log('Blacklisted:', isRepeatOffender);\nconsole.log('Refund:', data.price_pkr);\n\nreturn [{ json: resolution }];"
+      },
+      "id": "e3b15f23-29b8-4b44-9f5b-c5f3605a599e",
+      "name": "No Show Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        592,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings?booking_id=eq.{{ $('WF6 — Router').first().json.booking_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"status\": \"no_show\", \"flagged_for_review\": true, \"updated_at\": \"{{ new Date().toISOString() }}\" }",
+        "options": {}
+      },
+      "id": "d0b6ae7a-f4d0-4ffb-85f3-91601056d253",
+      "name": "Supabase — Status: no_show",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        816,
+        400
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('No Show Handler').first().json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "7c5c6970-e62a-4f11-978d-e0ea84e43e19",
+      "name": "Respond — No Show",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        816,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "type-cancelled",
+              "leftValue": "={{ $json.dispute_type }}",
+              "rightValue": "provider_cancelled",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8c4f7ace-869f-429b-9e92-19b0bdf2be87",
+      "name": "Is Provider Cancelled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        592,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF6 — PROVIDER CANCELLED HANDLER\n// Provider cancelled after booking was confirmed.\n// Auto-triggers rebooking using WF2 alternatives list.\n// ============================================================\nconst data = $('WF6 — Router').first().json;\nconst now = new Date();\n\n// Use alternatives passed in from WF2 response (if available)\nconst alternatives = data.alternatives || [];\nconst hasAlternatives = alternatives.length > 0;\n\n// Pick best alternative (first in already-ranked list from WF2)\nconst nextBestProvider = hasAlternatives ? alternatives[0] : null;\n\n// Hours until appointment\nconst bookingDate = new Date(data.booking_date || now);\nconst hoursUntilBooking = Math.round((bookingDate - now) / 3600000);\nconst isUrgent = hoursUntilBooking < 3;\n\nconst resolution = {\n  status: 'dispute_in_progress',\n  dispute_type: 'provider_cancelled',\n  booking_id: data.booking_id,\n  user_email: data.user_email,\n  cancelled_provider: {\n    id: data.provider_id,\n    name: data.provider_name,\n    penalty: 'Cancellation strike added. Rate updated in matching system.',\n    cancellation_logged: true\n  },\n  rebooking: {\n    triggered: hasAlternatives,\n    urgency: isUrgent ? 'HIGH — less than 3 hours to appointment' : 'NORMAL',\n    next_best_provider: nextBestProvider ? {\n      name: nextBestProvider.name,\n      score: nextBestProvider.computed_score,\n      rating: nextBestProvider.rating,\n      distance_km: nextBestProvider.distance_km,\n      estimated_arrival: nextBestProvider.estimated_arrival\n    } : null,\n    auto_rebook_instruction: nextBestProvider\n      ? `System will auto-book ${nextBestProvider.name} if customer approves.`\n      : 'No alternatives available. Manual rebooking required.',\n    rebook_payload: nextBestProvider ? {\n      action: 'get_slots',\n      provider_id: nextBestProvider.id,\n      provider_name: nextBestProvider.name,\n      service_type: data.service_type,\n      location: data.location,\n      booking_date: data.booking_date,\n      price_pkr: data.price_pkr,\n      availability_slots: nextBestProvider.availability_slots || ['09:00', '11:00', '14:00']\n    } : null\n  },\n  compensation: {\n    eligible: isUrgent,\n    amount_pkr: isUrgent ? 200 : 0,\n    note: isUrgent\n      ? 'PKR 200 discount on next booking — urgent cancellation compensation'\n      : 'No compensation — cancellation was more than 3 hours before appointment'\n  },\n  antigravity_trace: {\n    reasoning: `Provider ${data.provider_name} cancelled booking ${data.booking_id}. Hours until appointment: ${hoursUntilBooking}h. Urgency: ${isUrgent ? 'HIGH' : 'NORMAL'}. Next best alternative: ${nextBestProvider?.name || 'None'}. Auto-rebooking: ${hasAlternatives ? 'triggered' : 'not possible'}.`,\n    confidence: 90,\n    escalate_to_human: !hasAlternatives && isUrgent\n  },\n  customer_message:\n    `${data.provider_name} ne booking cancel kar di hai.\\n` +\n    (nextBestProvider\n      ? `Hum ne aapke liye next best provider ${nextBestProvider.name} dhundh liya hai. Confirm karein?`\n      : `Filhal koi alternative provider available nahi — hum aapko manually help karenge.`),\n  simulated_whatsapp:\n    `Provider Cancelled — Khadmat AI\\n` +\n    `Booking: ${data.booking_id}\\n` +\n    `${data.provider_name} ne cancel kar diya.\\n` +\n    (nextBestProvider\n      ? `New provider available: ${nextBestProvider.name} (Score: ${nextBestProvider.computed_score})\\nConfirm karein?`\n      : `Koi alternative nahi mila. Team contact karegi.`),\n  workflow: 'WF6-ProviderCancelled',\n  timestamp: now.toISOString()\n};\n\nconsole.log('=== WF6 Provider Cancelled ===');\nconsole.log('Has alternatives:', hasAlternatives);\nconsole.log('Urgent:', isUrgent);\nconsole.log('Next provider:', nextBestProvider?.name || 'None');\n\nreturn [{ json: resolution }];"
+      },
+      "id": "e8d9852c-3373-4e5d-b3c7-e9503696247b",
+      "name": "Provider Cancelled Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        816,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings?booking_id=eq.{{ $('WF6 — Router').first().json.booking_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"status\": \"provider_cancelled\", \"flagged_for_review\": true, \"updated_at\": \"{{ new Date().toISOString() }}\" }",
+        "options": {}
+      },
+      "id": "80c2eeb9-231f-45f7-9e2c-a031cf71200f",
+      "name": "Supabase — Status: provider_cancelled",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        688
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Provider Cancelled Handler').first().json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "9ead1a77-6d79-4e1a-89e1-4082c105a714",
+      "name": "Respond — Provider Cancelled",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1040,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "type-quality",
+              "leftValue": "={{ $json.dispute_type }}",
+              "rightValue": "quality_complaint",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ae7356b1-871a-411c-a58b-0161a420bb62",
+      "name": "Is Quality Complaint?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        816,
+        1360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF6 — QUALITY COMPLAINT HANDLER\n// Triggered manually or auto-escalated from WF5 (rating <= 2).\n// Classifies severity, decides compensation, flags provider.\n// ============================================================\nconst data = $('WF6 — Router').first().json;\nconst now = new Date();\n\nconst rating = parseFloat(data.rating) || 1;\nconst sentiment = data.sentiment || 'negative';\nconst review = data.review || data.review_text || '';\nconst autoEscalated = data.auto_escalated || false;\n\n// ── Severity Classification ───────────────────────────────\nlet severity, compensationPct, providerAction, escalateHuman;\n\nif (rating === 1 || (sentiment === 'negative' && rating <= 2)) {\n  severity = 'CRITICAL';\n  compensationPct = 0.50; // 50% refund\n  providerAction = 'Immediate review. Score heavily penalized. Risk of blacklist.';\n  escalateHuman = true;\n} else if (rating === 2) {\n  severity = 'HIGH';\n  compensationPct = 0.25; // 25% refund\n  providerAction = 'Warning issued. Score penalized. Monitored for 30 days.';\n  escalateHuman = false;\n} else {\n  severity = 'MEDIUM';\n  compensationPct = 0;\n  providerAction = 'Soft warning. Customer notified of improvement steps.';\n  escalateHuman = false;\n}\n\nconst estimatedRefund = Math.round((data.price_pkr || 0) * compensationPct);\n\n// ── Provider Impact on WF2 Matching ──────────────────────\nconst matchingPenalty = severity === 'CRITICAL' ? -25\n  : severity === 'HIGH' ? -15 : -5;\n\nconst resolution = {\n  status: severity === 'CRITICAL' ? 'escalated_to_human' : 'dispute_resolved',\n  dispute_type: 'quality_complaint',\n  booking_id: data.booking_id,\n  provider_name: data.provider_name,\n  provider_id: data.provider_id,\n  user_email: data.user_email,\n  service_type: data.service_type,\n  complaint_details: {\n    rating_given: rating,\n    review_text: review,\n    sentiment: sentiment,\n    auto_escalated_from_wf5: autoEscalated,\n    severity: severity\n  },\n  decision: {\n    compensation: {\n      refund_percentage: compensationPct * 100,\n      refund_pkr: estimatedRefund,\n      eligible: estimatedRefund > 0,\n      method: estimatedRefund > 0 ? 'Credit on next booking or cash' : 'No refund — medium severity only'\n    },\n    provider_penalty: {\n      action: providerAction,\n      matching_score_delta: matchingPenalty,\n      flagged: true,\n      under_review_days: severity === 'CRITICAL' ? 30 : 7\n    },\n    human_escalation: {\n      required: escalateHuman,\n      reason: escalateHuman ? 'CRITICAL rating — human agent must review within 24h' : null,\n      ticket_id: escalateHuman ? `TKT-${Date.now()}` : null\n    }\n  },\n  antigravity_trace: {\n    reasoning: `Quality complaint for booking ${data.booking_id}. Rating: ${rating}/5. Severity: ${severity}. Compensation: PKR ${estimatedRefund} (${compensationPct * 100}%). Provider ${data.provider_name} score delta: ${matchingPenalty}. Human escalation: ${escalateHuman}.`,\n    confidence: 88,\n    decision_factors: ['rating_score', 'sentiment_analysis', 'review_keywords', 'auto_escalation_flag']\n  },\n  customer_message: estimatedRefund > 0\n    ? `Aapki complaint receive ho gayi. Hum ne PKR ${estimatedRefund} refund approve kar diya hai. Aapki next booking mein credit mil jaega.`\n    : `Aapki complaint record ho gayi. Hum ${data.provider_name} ki service improve karne ke liye kadam utha rahe hain.`,\n  simulated_whatsapp:\n    `Quality Complaint — Khadmat AI\\n` +\n    `Booking: ${data.booking_id}\\n` +\n    `Rating: ${rating}/5 (${severity})\\n` +\n    `${estimatedRefund > 0 ? `Refund approved: PKR ${estimatedRefund}` : 'No refund — complaint logged'}\\n` +\n    `${escalateHuman ? 'Human agent will contact you within 24h.' : 'Issue resolved automatically.'}`,\n  workflow: 'WF6-QualityComplaint',\n  timestamp: now.toISOString()\n};\n\nconsole.log('=== WF6 Quality Complaint ===');\nconsole.log('Severity:', severity);\nconsole.log('Refund:', estimatedRefund);\nconsole.log('Human escalation:', escalateHuman);\n\nreturn [{ json: resolution }];"
+      },
+      "id": "df8d16a9-a80a-4f41-a894-19d053c22fc7",
+      "name": "Quality Complaint Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        1072
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings?booking_id=eq.{{ $('WF6 — Router').first().json.booking_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"status\": \"disputed\", \"flagged_for_review\": true, \"updated_at\": \"{{ new Date().toISOString() }}\" }",
+        "options": {}
+      },
+      "id": "5eb88f4b-23aa-4682-88dd-888cd63c9e1c",
+      "name": "Supabase — Status: disputed (quality)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1264,
+        976
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Quality Complaint Handler').first().json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "e6c22732-3af9-4987-8ad8-aaa798458e98",
+      "name": "Respond — Quality Complaint",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1264,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "type-price",
+              "leftValue": "={{ $json.dispute_type }}",
+              "rightValue": "price_disagreement",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "760ccd56-4f96-4854-96af-b84a1f03a0dc",
+      "name": "Is Price Disagreement?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        1552
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF6 — PRICE DISAGREEMENT HANDLER\n// Customer was charged more than the quoted price.\n// Compares quoted vs charged, decides refund amount.\n// ============================================================\nconst data = $('WF6 — Router').first().json;\nconst now = new Date();\n\nconst quotedPrice = parseInt(data.quoted_price_pkr) || parseInt(data.price_pkr) || 0;\nconst chargedPrice = parseInt(data.charged_price_pkr) || parseInt(data.final_price_pkr) || 0;\nconst difference = chargedPrice - quotedPrice;\nconst overchargePercent = quotedPrice > 0 ? ((difference / quotedPrice) * 100).toFixed(1) : 0;\n\n// ── Decision Logic ────────────────────────────────────────\nlet decision, refundAmount, providerNote;\n\nif (difference <= 0) {\n  decision = 'NO_OVERCHARGE';\n  refundAmount = 0;\n  providerNote = 'Charge matches or is below quote. No action needed.';\n} else if (overchargePercent <= 10) {\n  // Within 10% tolerance — minor variance, no refund but log it\n  decision = 'MINOR_VARIANCE';\n  refundAmount = 0;\n  providerNote = `Overcharge within 10% tolerance (${overchargePercent}%). Logged as warning.`;\n} else if (overchargePercent <= 30) {\n  // Significant overcharge — partial refund of excess\n  decision = 'PARTIAL_REFUND';\n  refundAmount = Math.round(difference * 0.75); // refund 75% of excess\n  providerNote = `Overcharge of ${overchargePercent}%. PKR ${refundAmount} refund issued. Strike added.`;\n} else {\n  // Major overcharge — full excess refunded\n  decision = 'FULL_EXCESS_REFUND';\n  refundAmount = difference;\n  providerNote = `Major overcharge of ${overchargePercent}%. Full excess PKR ${refundAmount} refunded. Escalated for review.`;\n}\n\nconst resolution = {\n  status: 'dispute_resolved',\n  dispute_type: 'price_disagreement',\n  booking_id: data.booking_id,\n  provider_name: data.provider_name,\n  provider_id: data.provider_id,\n  user_email: data.user_email,\n  price_analysis: {\n    quoted_pkr: quotedPrice,\n    charged_pkr: chargedPrice,\n    difference_pkr: difference,\n    overcharge_percent: parseFloat(overchargePercent),\n    decision: decision\n  },\n  resolution: {\n    refund: {\n      amount_pkr: refundAmount,\n      eligible: refundAmount > 0,\n      method: refundAmount > 0 ? 'Credit on next booking or cash refund' : 'No refund applicable'\n    },\n    provider_action: providerNote,\n    flagged: difference > 0\n  },\n  antigravity_trace: {\n    reasoning: `Price dispute for booking ${data.booking_id}. Quoted: PKR ${quotedPrice}. Charged: PKR ${chargedPrice}. Difference: PKR ${difference} (${overchargePercent}%). Decision: ${decision}. Refund: PKR ${refundAmount}.`,\n    confidence: 97,\n    decision_factors: ['quoted_price', 'charged_price', 'overcharge_percentage', 'tolerance_band']\n  },\n  customer_message: refundAmount > 0\n    ? `Aapka case review hua. Quoted price PKR ${quotedPrice} tha lekin PKR ${chargedPrice} charge hua. PKR ${refundAmount} refund approve ho gaya.`\n    : difference > 0\n    ? `Farq PKR ${difference} hai jo 10% tolerance ke andar hai. Yeh acceptable variation hai — provider ko warning di gayi.`\n    : 'Aapka charge quote ke mutabiq hai. Koi overcharge nahi hua.',\n  simulated_whatsapp:\n    `Price Dispute — Khadmat AI\\n` +\n    `Booking: ${data.booking_id}\\n` +\n    `Quoted: PKR ${quotedPrice} | Charged: PKR ${chargedPrice}\\n` +\n    `Decision: ${decision}\\n` +\n    `${refundAmount > 0 ? `Refund: PKR ${refundAmount}` : 'No refund applicable'}`,\n  workflow: 'WF6-PriceDisagreement',\n  timestamp: now.toISOString()\n};\n\nconsole.log('=== WF6 Price Disagreement ===');\nconsole.log('Quoted:', quotedPrice, '| Charged:', chargedPrice, '| Diff:', difference);\nconsole.log('Decision:', decision, '| Refund:', refundAmount);\n\nreturn [{ json: resolution }];"
+      },
+      "id": "cf59e44f-4319-44f2-80ff-d83808a74714",
+      "name": "Price Disagreement Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1264,
+        1360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings?booking_id=eq.{{ $('WF6 — Router').first().json.booking_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"status\": \"price_disputed\", \"flagged_for_review\": true, \"updated_at\": \"{{ new Date().toISOString() }}\" }",
+        "options": {}
+      },
+      "id": "67324844-6666-45f8-bb14-c1a2e3a41a93",
+      "name": "Supabase — Status: price_disputed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1488,
+        1264
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Price Disagreement Handler').first().json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "f06a62d1-2a6a-4dbe-ac3c-6b049cf71318",
+      "name": "Respond — Price Disagreement",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1488,
+        1456
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF6 — OVERRUN HANDLER\n// Job took longer than expected, provider charging extra.\n// Checks if customer was notified before overrun.\n// Decides if extra charge is fair or should be disputed.\n// ============================================================\nconst data = $('WF6 — Router').first().json;\nconst now = new Date();\n\nconst quotedPrice = parseInt(data.quoted_price_pkr) || parseInt(data.price_pkr) || 0;\nconst extraCharge = parseInt(data.extra_charge_pkr) || 0;\nconst customerNotified = data.customer_notified_before_overrun || false;\nconst customerApproved = data.customer_approved_overrun || false;\nconst estimatedDuration = parseInt(data.estimated_duration_mins) || 60;\nconst actualDuration = parseInt(data.actual_duration_mins) || 90;\nconst overrunMins = actualDuration - estimatedDuration;\n\n// ── Decision Logic ────────────────────────────────────────\nlet decision, approvedExtra, note;\n\nif (customerApproved) {\n  decision = 'APPROVED_BY_CUSTOMER';\n  approvedExtra = extraCharge;\n  note = 'Customer pre-approved extra charge. No dispute.';\n} else if (!customerNotified && extraCharge > 0) {\n  decision = 'EXTRA_CHARGE_REJECTED';\n  approvedExtra = 0;\n  note = 'Customer was not notified before overrun. Extra charge rejected. Provider warned.';\n} else if (overrunMins <= 15) {\n  decision = 'MINOR_OVERRUN_ACCEPTED';\n  approvedExtra = Math.min(extraCharge, Math.round(quotedPrice * 0.10));\n  note = `Overrun under 15 mins — up to 10% extra (PKR ${approvedExtra}) accepted as fair.`;\n} else {\n  decision = 'OVERRUN_NEGOTIATED';\n  approvedExtra = Math.round(extraCharge * 0.50);\n  note = `Significant overrun (${overrunMins} mins). 50% of extra charge (PKR ${approvedExtra}) approved. Rest waived.`;\n}\n\nconst resolution = {\n  status: 'dispute_resolved',\n  dispute_type: 'overrun',\n  booking_id: data.booking_id,\n  provider_name: data.provider_name,\n  user_email: data.user_email,\n  overrun_details: {\n    estimated_duration_mins: estimatedDuration,\n    actual_duration_mins: actualDuration,\n    overrun_mins: overrunMins,\n    quoted_price_pkr: quotedPrice,\n    extra_charge_requested_pkr: extraCharge,\n    customer_notified: customerNotified,\n    customer_approved: customerApproved\n  },\n  resolution: {\n    decision: decision,\n    approved_extra_pkr: approvedExtra,\n    total_fair_price_pkr: quotedPrice + approvedExtra,\n    note: note\n  },\n  antigravity_trace: {\n    reasoning: `Overrun dispute for booking ${data.booking_id}. Estimated: ${estimatedDuration}min, Actual: ${actualDuration}min (+${overrunMins}min). Extra requested: PKR ${extraCharge}. Customer notified: ${customerNotified}. Decision: ${decision}. Approved extra: PKR ${approvedExtra}.`,\n    confidence: 91,\n    decision_factors: ['customer_notification', 'customer_approval', 'overrun_duration', 'extra_charge_amount']\n  },\n  customer_message:\n    `Job overrun dispute resolved.\\n` +\n    `Quoted: PKR ${quotedPrice} | Extra requested: PKR ${extraCharge}\\n` +\n    `Approved extra: PKR ${approvedExtra}\\n` +\n    `Total fair price: PKR ${quotedPrice + approvedExtra}`,\n  simulated_whatsapp:\n    `Overrun Dispute — Khadmat AI\\n` +\n    `Booking: ${data.booking_id}\\n` +\n    `Decision: ${decision}\\n` +\n    `Total fair charge: PKR ${quotedPrice + approvedExtra}`,\n  workflow: 'WF6-Overrun',\n  timestamp: now.toISOString()\n};\n\nconsole.log('=== WF6 Overrun ===');\nconsole.log('Decision:', decision);\nconsole.log('Approved extra:', approvedExtra);\n\nreturn [{ json: resolution }];"
+      },
+      "id": "d60ad35d-ecb6-475a-96cf-fd607add0a20",
+      "name": "Overrun Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1264,
+        1744
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings?booking_id=eq.{{ $('WF6 — Router').first().json.booking_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"status\": \"overrun_disputed\", \"flagged_for_review\": true, \"updated_at\": \"{{ new Date().toISOString() }}\" }",
+        "options": {}
+      },
+      "id": "3094e4b2-597f-4000-8488-76997c0e9e82",
+      "name": "Supabase — Status: overrun_disputed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1488,
+        1648
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Overrun Handler').first().json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "ea0569fc-a5dc-4178-b9aa-457f683460fb",
+      "name": "Respond — Overrun",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1488,
+        1840
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.user_email }}",
+        "subject": "=Dispute Update - Booking {{ $json.booking_id }}",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\">\n</head>\n<body style=\"font-family: Arial, sans-serif; font-size: 15px; color: #333333; line-height: 1.6; padding: 20px;\">\n  <div style=\"max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;\">\n\n    <h2 style=\"color: #2c5aa0;\">Dispute Update</h2>\n\n    <p>Dear {{ $json.user_name || 'Valued Customer' }},</p>\n\n    <p>We hope this finds you well. We are reaching out with an update concerning your dispute regarding Booking ID: <strong>{{ $json.booking_id }}</strong>.</p>\n\n    <hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\">\n\n    <h3 style=\"color: #2c5aa0;\">Dispute Details:</h3>\n\n    <table style=\"width: 100%;\">\n      <tr>\n        <td style=\"padding: 4px 12px 4px 0;\"><strong>Booking ID:</strong></td>\n        <td style=\"padding: 4px 0;\">{{ $json.booking_id }}</td>\n      </tr>\n      <tr>\n        <td style=\"padding: 4px 12px 4px 0;\"><strong>Dispute Type:</strong></td>\n        <td style=\"padding: 4px 0;\">{{ $json.dispute_type }}</td>\n      </tr>\n      <tr>\n        <td style=\"padding: 4px 12px 4px 0;\"><strong>Service Provider:</strong></td>\n        <td style=\"padding: 4px 0;\">{{ $json.provider_name }}</td>\n      </tr>\n    </table>\n\n    <hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\">\n\n    <h3 style=\"color: #2c5aa0;\">Resolution Provided:</h3>\n\n    <p>{{ $json.customer_message }}</p>\n\n    <hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\">\n\n    <p>For more information, please log in to your GharFix account or respond to this email.</p>\n\n    <p>We appreciate your patience and understanding as we work to resolve this matter for you.</p>\n\n    <p style=\"margin-top: 30px;\">\n      Best regards,<br>\n      <strong>The GharFix Team</strong>\n    </p>\n\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1952,
+        1136
+      ],
+      "id": "d65a3523-c0df-486c-907d-ebc206b8568d",
+      "name": "Send a message",
+      "webhookId": "769f873d-208f-4cfd-8839-01478e56b2d9",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "nTOYRDSTzQdF6yEt",
+          "name": "gharfix end email"
+        }
+      }
+    }
+  ],
+  "pinData": {
+    "WF6 — HTTP Trigger": [
+      {
+        "json": {
+          "headers": {
+            "host": "ghack.app.n8n.cloud",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+            "content-length": "321",
+            "accept": "*/*",
+            "accept-encoding": "gzip, br",
+            "accept-language": "en-GB,en-US;q=0.9,en;q=0.8",
+            "cdn-loop": "cloudflare; loops=1; subreqs=1",
+            "cf-connecting-ip": "103.152.116.58",
+            "cf-ew-via": "15",
+            "cf-ipcountry": "PK",
+            "cf-ray": "9fc4b8fe7e904f89-LHE",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "cf-worker": "n8n.cloud",
+            "content-type": "application/json",
+            "origin": "https://ais-dev-olwxtcth2x36wat4ojprkb-111364816637.asia-southeast1.run.app",
+            "priority": "u=1, i",
+            "referer": "https://ais-dev-olwxtcth2x36wat4ojprkb-111364816637.asia-southeast1.run.app/",
+            "sec-ch-ua": "\"Chromium\";v=\"148\", \"Google Chrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "cross-site",
+            "x-forwarded-for": "103.152.116.58, 172.70.201.134",
+            "x-forwarded-host": "ghack.app.n8n.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik-prod-users-gwc-78-54c9bd7fd8-tm6hw",
+            "x-is-trusted": "yes",
+            "x-real-ip": "103.152.116.58"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "dispute_type": "price_disagreement",
+            "booking_id": "BK-2026-1778794086481-966",
+            "provider_id": "abrar_plumber",
+            "provider_name": "Abrar plumber",
+            "service_type": "plumber",
+            "location": "Johar Town Lahore",
+            "booking_date": "2026-05-14",
+            "price_pkr": 1420,
+            "slot": "4:00 PM",
+            "alternatives": [],
+            "user_email": "maryumdigitalstudio@gmail.com"
+          },
+          "webhookUrl": "https://ghack.app.n8n.cloud/webhook/khadmat-dispute",
+          "executionMode": "production"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "WF6 — HTTP Trigger": {
+      "main": [
+        [
+          {
+            "node": "WF6 — Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF6 — Router": {
+      "main": [
+        [
+          {
+            "node": "Is No Show?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is No Show?": {
+      "main": [
+        [
+          {
+            "node": "No Show Handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Provider Cancelled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Show Handler": {
+      "main": [
+        [
+          {
+            "node": "Supabase — Status: no_show",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond — No Show",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Provider Cancelled?": {
+      "main": [
+        [
+          {
+            "node": "Provider Cancelled Handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Quality Complaint?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Provider Cancelled Handler": {
+      "main": [
+        [
+          {
+            "node": "Supabase — Status: provider_cancelled",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond — Provider Cancelled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Quality Complaint?": {
+      "main": [
+        [
+          {
+            "node": "Quality Complaint Handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Price Disagreement?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quality Complaint Handler": {
+      "main": [
+        [
+          {
+            "node": "Supabase — Status: disputed (quality)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond — Quality Complaint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Price Disagreement?": {
+      "main": [
+        [
+          {
+            "node": "Price Disagreement Handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Overrun Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Price Disagreement Handler": {
+      "main": [
+        [
+          {
+            "node": "Supabase — Status: price_disputed",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond — Price Disagreement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Overrun Handler": {
+      "main": [
+        [
+          {
+            "node": "Supabase — Status: overrun_disputed",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond — Overrun",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond — Price Disagreement": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond — Quality Complaint": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond — Provider Cancelled": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond — No Show": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond — Overrun": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "67681080-5e7a-41a9-850a-4f9d25455836",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4849cacf29ece9bf383abb54fb2646c4bb8efa5b8d10cc48771c12ba3d91b0b0"
+  },
+  "id": "Fuq0CSy9h1Z6ba68",
+  "tags": [
+    {
+      "updatedAt": "2026-05-15T20:17:04.638Z",
+      "createdAt": "2026-05-15T20:17:04.638Z",
+      "id": "7TIUqObclsfafZNc",
+      "name": "Hackathon"
+    },
+    {
+      "updatedAt": "2026-05-15T20:17:04.629Z",
+      "createdAt": "2026-05-15T20:17:04.629Z",
+      "id": "TQ0mNmjGv8rqs8UG",
+      "name": "Khadmat AI"
+    }
+  ]
+}

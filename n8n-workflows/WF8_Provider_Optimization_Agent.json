@@ -1,0 +1,431 @@
+{
+  "name": "Khadmat AI — Provider Optimization Agent (v3 Fixed)",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        400,
+        1056
+      ],
+      "id": "22ada94b-f924-4acb-a0be-18068d7a9284",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================\n// EXTRACT MATCHING PROVIDER FROM WF3 RESPONSE\n// =====================================================\n\nconst intakeProviderId = $('WF8 — Intake & Validator')\n  .first()\n  .json\n  .provider_id;\n\nconst data = $input.first().json;\n\nconst services = data.services || [];\n\n// Find matching provider inside services[]\nconst matchedService = services.find(s => {\n  const provider = s.provider || {};\n\n  return (\n    provider.place_id === intakeProviderId ||\n    provider.id === intakeProviderId ||\n    provider.provider_id === intakeProviderId\n  );\n});\n\nif (!matchedService) {\n  return [{\n    json: {\n      error: 'No matching provider found',\n      searched_for: intakeProviderId\n    }\n  }];\n}\n\n// Return only provider object\nreturn [{\n  json: matchedService.provider\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        128,
+        1248
+      ],
+      "id": "cac79f96-a0b0-4e60-99be-e192a492d1f6",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://n8ndigitalstudio.duckdns.org/webhook/khadmat-provider-match",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"provider_id\": \"{{ $('WF8 — Intake & Validator').first().json.provider_id }}\",\n  \"provider_name\": \"{{ $('WF8 — Intake & Validator').first().json.provider_name }}\",\n  \"action\": \"get_profile\",\n  \"service_type\": \"{{ $('Fetch Provider Bookings').first().json.service_type || 'general' }}\",\n  \"location\": \"{{ $('Fetch Provider Bookings').first().json.location || 'Lahore' }}\"\n}",
+        "options": {
+          "timeout": 8000
+        }
+      },
+      "id": "82291cbb-81ae-4148-a6d0-cfcefca903d5",
+      "name": "Fetch Provider Profile (WF2 Enrich)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -144,
+        1248
+      ],
+      "alwaysOutputData": true,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "578c357c-36fb-4cf3-98a0-71c70925b445",
+      "name": "Respond — Provider Dashboard",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1008,
+        1056
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF8 — OPTIMIZATION ENGINE (v3 — Provider Enrichment Fix)\n// Fixes applied:\n//   1. wf2Profile now reads from 'Code in JavaScript' (the extractor\n//      that already filtered the matched provider from WF2's 3-5 results)\n//      instead of reading raw WF2 response directly\n//   2. Per-booking ui_actions added — frontend renders correct buttons\n//      per booking with zero frontend logic changes\n//   3. bookings[] array in response — full list with role + ui_actions\n//   4. provider_action_locked bookings excluded from active workload\n// ============================================================\nconst intake = $('WF8 — Intake & Validator').first().json;\nconst rawBookings = $('Fetch Provider Bookings').all().map(r => r.json);\n\n// WF2 profile enrichment — reads from 'Code in JavaScript' extractor\n// which already filtered the ONE matching provider from WF2's 3-5 results\nlet wf2Profile = null;\ntry {\n  const enrichRaw = $('Code in JavaScript').first().json;\n  // Code in JavaScript returns matchedService.provider directly\n  // so enrichRaw IS the provider object — check it has valid data\n  if (enrichRaw && !enrichRaw.error && (enrichRaw.place_id || enrichRaw.id || enrichRaw.rating !== undefined)) {\n    wf2Profile = enrichRaw;\n  } else {\n    wf2Profile = null;\n  }\n} catch(e) {\n  // WF2 enrichment unavailable — gracefully degrade\n  wf2Profile = null;\n}\n\nconst platformBookings = $('Fetch Platform Bookings').all().map(r => r.json);\nconst now = new Date();\nconst today = intake.today;\nconst maxDailyBookings = intake.max_daily_bookings;\nconst baseRate = intake.base_rate_pkr;\nconst myProviderId = intake.provider_id;\n\n// ── CLASSIFY bookings by role ─────────────────────────────\n// Row where provider_id = mine       → my original booking\n// Row where reassigned_to_provider_id = mine → I am the NEW provider\n// Row where status=rescheduled AND provider_id=mine → I was replaced\n\nconst myOriginalBookings = rawBookings.filter(b =>\n  !b.reassigned_to_provider_id || b.reassigned_to_provider_id !== myProviderId\n);\nconst reassignedToMe = rawBookings.filter(b =>\n  b.reassigned_to_provider_id === myProviderId\n);\nconst iLostBookings = myOriginalBookings.filter(b =>\n  b.status === 'rescheduled' && b.provider_action_locked\n);\n\n// All bookings I should count for earnings\nconst allMyEarningBookings = [\n  ...myOriginalBookings.filter(b => b.status === 'completed'),\n  ...reassignedToMe.filter(b => b.status === 'completed')\n];\n\n// ── 1. WORKLOAD BALANCE ───────────────────────────────────\nconst confirmedToday = myOriginalBookings.filter(b =>\n  b.booking_date === today &&\n  (b.status === 'confirmed' || b.status === 'in_progress') &&\n  !b.provider_action_locked\n).concat(\n  reassignedToMe.filter(b =>\n    b.booking_date === today &&\n    (b.status === 'confirmed' || b.status === 'in_progress')\n  )\n);\n\nconst completedAll = allMyEarningBookings;\nconst cancelledAll = myOriginalBookings.filter(b =>\n  b.status === 'cancelled' || b.status === 'provider_cancelled' || b.status === 'no_show'\n);\nconst utilizationRate = Math.round((confirmedToday.length / maxDailyBookings) * 100);\nconst workloadStatus =\n  utilizationRate >= 100 ? 'FULL' :\n  utilizationRate >= 75  ? 'BUSY' :\n  utilizationRate >= 50  ? 'MODERATE' : 'AVAILABLE';\n\nconst bookedSlotsToday = confirmedToday.map(b => b.slot);\nconst allPossibleSlots = ['09:00','10:00','11:00','12:00','14:00','15:00','16:00','17:00'];\nconst openSlotsToday = allPossibleSlots.filter(s => !bookedSlotsToday.includes(s));\n\n// ── 2. EARNINGS ───────────────────────────────────────────\nconst totalEarnings = completedAll.reduce((sum, b) => {\n  return sum + (parseInt(b.final_price_pkr || b.price_pkr) || 0);\n}, 0);\nconst avgEarningPerJob = completedAll.length > 0\n  ? Math.round(totalEarnings / completedAll.length) : 0;\n\nconst platformCompleted = platformBookings.filter(b => b.status === 'completed');\nconst platformTotal = platformCompleted.reduce((sum, b) => {\n  return sum + (parseInt(b.final_price_pkr || b.price_pkr) || 0);\n}, 0);\nconst platformAvg = platformCompleted.length > 0\n  ? Math.round(platformTotal / platformCompleted.length) : 1200;\n\nconst earningIndex = avgEarningPerJob > 0\n  ? parseFloat((avgEarningPerJob / platformAvg).toFixed(2)) : 1.0;\nconst earningFairness =\n  earningIndex >= 0.9 ? 'FAIR' :\n  earningIndex >= 0.7 ? 'BELOW_AVERAGE' : 'LOW';\n\n// ── 3. REPUTATION ─────────────────────────────────────────\nconst ratedBookings = completedAll.filter(b => b.customer_rating !== null && b.customer_rating !== undefined);\nconst ratings = ratedBookings.map(b => parseFloat(b.customer_rating));\nconst inAppAvgRating = ratings.length > 0\n  ? parseFloat((ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(2)) : null;\n\n// Blend: in-app ratings take priority, fall back to WF2 Google Places\nconst googleRating = wf2Profile?.rating || null;\nconst googleReviewCount = wf2Profile?.review_count || 0;\nconst avgRating = inAppAvgRating !== null ? inAppAvgRating : googleRating;\nconst ratingSource = inAppAvgRating !== null ? 'in_app' : googleRating ? 'google_places' : null;\n\nconst flaggedCount = rawBookings.filter(b => b.flagged_for_review === true).length;\nconst fiveStarCount = ratings.filter(r => r === 5).length;\nconst lowRatingCount = ratings.filter(r => r <= 2).length;\n\nconst reputationHealth =\n  flaggedCount > 3 ? 'AT_RISK' :\n  flaggedCount > 1 ? 'MONITOR' :\n  avgRating === null ? 'NEW' :\n  avgRating >= 4.5 ? 'EXCELLENT' :\n  avgRating >= 3.5 ? 'GOOD' : 'NEEDS_IMPROVEMENT';\n\n// ── 4. CANCELLATION RATE ──────────────────────────────────\nconst totalBookings = myOriginalBookings.length;\nconst cancellationRate = totalBookings > 0\n  ? parseFloat((cancelledAll.length / totalBookings).toFixed(2)) : 0;\nconst cancellationStatus =\n  cancellationRate > 0.20 ? 'HIGH_RISK' :\n  cancellationRate > 0.10 ? 'WARNING' : 'GOOD';\n\n// ── 5. LOYALTY DETECTION ──────────────────────────────────\nconst emailCounts = {};\ncompletedAll.forEach(b => {\n  if (b.user_email) emailCounts[b.user_email] = (emailCounts[b.user_email] || 0) + 1;\n});\nconst repeatCustomers = Object.entries(emailCounts)\n  .filter(([, count]) => count >= 2)\n  .map(([email, count]) => ({ email, bookings: count }));\nconst loyaltyInsight = repeatCustomers.length > 0\n  ? `${repeatCustomers.length} repeat customer(s) detected. Loyalty discounts could boost retention.`\n  : 'No repeat customers yet — focus on getting your first repeat booking.';\n\n// ── 6. DEMAND FORECASTING ─────────────────────────────────\nconst slotDemand = {};\nallPossibleSlots.forEach(s => { slotDemand[s] = 0; });\nplatformBookings.forEach(b => {\n  if (b.slot && slotDemand[b.slot] !== undefined) slotDemand[b.slot]++;\n});\nconst sortedByDemand = Object.entries(slotDemand).sort((a, b) => b[1] - a[1]);\nconst recommendedSlots = sortedByDemand.slice(0, 3).map(([slot, count]) => {\n  const [h] = slot.split(':').map(Number);\n  const period = h >= 12 ? 'PM' : 'AM';\n  const hour = h > 12 ? h - 12 : h;\n  return {\n    slot,\n    label: `${hour}:00 ${period}`,\n    demand_score: count,\n    is_open_today: openSlotsToday.includes(slot),\n    recommendation: count >= 3 ? 'HIGH DEMAND — stay available'\n      : count >= 1 ? 'MODERATE DEMAND — good to keep open'\n      : 'LOW DEMAND'\n  };\n});\n\n// ── 7. RATE OPTIMIZATION ──────────────────────────────────\nlet rateSuggestion;\nif (earningFairness === 'LOW') {\n  rateSuggestion = {\n    current_base_rate: baseRate,\n    suggested_base_rate: Math.round(platformAvg * 0.85),\n    reason: 'Avg earning is significantly below platform average. Rate increase recommended.',\n    loyalty_discount_suggestion: 'Offer 5% off to repeat customers while increasing base rate.'\n  };\n} else if (earningFairness === 'BELOW_AVERAGE') {\n  rateSuggestion = {\n    current_base_rate: baseRate,\n    suggested_base_rate: Math.round(baseRate * 1.1),\n    reason: 'Slightly below platform average. A 10% rate increase is recommended.',\n    loyalty_discount_suggestion: 'Offer 5% off to repeat customers to balance the increase.'\n  };\n} else {\n  rateSuggestion = {\n    current_base_rate: baseRate,\n    suggested_base_rate: baseRate,\n    reason: 'Rate is fair relative to platform average. No change needed.',\n    loyalty_discount_suggestion: repeatCustomers.length > 0\n      ? `Consider a 5% loyalty discount for your ${repeatCustomers.length} repeat customer(s).`\n      : null\n  };\n}\n\n// ── 8. WF2 ENRICHED PROFILE ───────────────────────────────\n// wf2Profile is the matched provider object from 'Code in JavaScript'\n// which already filtered the correct provider from WF2's 3-5 results\nconst enrichedProfile = wf2Profile ? {\n  provider_name: wf2Profile.name || intake.provider_name,\n  google_rating: wf2Profile.rating,\n  review_count: wf2Profile.review_count,\n  address: wf2Profile.address,\n  coordinates: wf2Profile.coordinates,\n  distance_km: wf2Profile.distance_km,\n  verified: wf2Profile.verified,\n  reputation_score: wf2Profile.reputation_score,\n  on_time_score: wf2Profile.on_time_score,\n  at_capacity: wf2Profile.at_capacity,\n  google_maps_url: wf2Profile.google_maps_url,\n  photos: wf2Profile.photos || [],\n  complexity_levels: wf2Profile.complexity_levels || [],\n  services: wf2Profile.services || [],\n  base_rate_pkr: wf2Profile.base_rate_pkr,\n  availability_slots: wf2Profile.availability_slots || [],\n  computed_score: wf2Profile.computed_score,\n  cancellation_rate: wf2Profile.cancellation_rate,\n  source: 'wf2_google_places_live'\n} : {\n  provider_name: intake.provider_name,\n  note: 'WF2 enrichment unavailable — send service_type + location in request for full profile',\n  source: 'unavailable'\n};\n\n// ── 9. RESCHEDULE IMPACT SUMMARY ──────────────────────────\nconst rescheduleImpact = {\n  bookings_lost_to_reschedule: iLostBookings.length,\n  bookings_gained_from_reschedule: reassignedToMe.length,\n  net_reschedule_impact: reassignedToMe.length - iLostBookings.length,\n  note: iLostBookings.length > 0\n    ? `${iLostBookings.length} booking(s) were rescheduled away from you. These no longer appear in your active workload.`\n    : 'No bookings rescheduled away from you.'\n};\n\n// ── 10. OPTIMIZATION TIPS ─────────────────────────────────\nconst tips = [\n  utilizationRate === 0\n    ? '🔔 No bookings today — you are visible for urgent same-day requests.'\n    : utilizationRate < 50\n    ? `📅 Only ${confirmedToday.length}/${maxDailyBookings} slots filled today.`\n    : null,\n  earningFairness !== 'FAIR'\n    ? `💰 Your avg earning (PKR ${avgEarningPerJob}) is below platform avg (PKR ${platformAvg}).`\n    : null,\n  recommendedSlots[0]?.is_open_today\n    ? `⏰ Peak slot ${recommendedSlots[0].slot} is still open today!`\n    : null,\n  completedAll.length < 5\n    ? '⭐ Complete more jobs to build your rating history.'\n    : null,\n  lowRatingCount > 0\n    ? `⚠️ ${lowRatingCount} low rating(s) detected. Review your service checklist.`\n    : null,\n  flaggedCount > 0\n    ? `🚩 ${flaggedCount} booking(s) flagged for review. Address disputes to protect ranking.`\n    : null,\n  cancellationStatus !== 'GOOD'\n    ? `❌ Cancellation rate ${(cancellationRate * 100).toFixed(0)}% is ${cancellationStatus}.`\n    : null,\n  repeatCustomers.length > 0 ? `🔁 ${loyaltyInsight}` : null,\n  iLostBookings.length > 0\n    ? `🔄 ${iLostBookings.length} booking(s) were reassigned away — maintain availability to avoid this.`\n    : null,\n  `📊 Utilization today: ${utilizationRate}% (${confirmedToday.length}/${maxDailyBookings} slots)`\n].filter(Boolean);\n\n// ── 11. PER-BOOKING UI ACTIONS ────────────────────────────\n// Frontend reads booking.ui_actions to render the correct buttons.\n// Same pattern as WF5 show_track_button / show_feedback_button.\nfunction getBookingUiActions(b, role) {\n  const status = b.status;\n  const trackingLocked = !!b.tracking_locked;\n\n  if (role === 'lost_to_reschedule') {\n    return {\n      show_track_button: false,\n      show_cancel_button: false,\n      show_report_button: false,\n      show_feedback_button: true,\n      primary_label: 'Booking Reassigned',\n      secondary_label: 'Leave Feedback',\n      reason: 'booking_rescheduled_to_new_provider'\n    };\n  }\n\n  if ((status === 'provider_cancelled' || status === 'rescheduled') && b.provider_action_locked) {\n    return {\n      show_track_button: false,\n      show_cancel_button: false,\n      show_report_button: false,\n      show_feedback_button: true,\n      primary_label: status === 'rescheduled' ? 'Booking Reassigned' : 'Cancelled',\n      secondary_label: 'Leave Feedback',\n      reason: status === 'rescheduled' ? 'booking_rescheduled_to_new_provider' : 'booking_cancelled_by_provider'\n    };\n  }\n\n  if (status === 'completed') {\n    return {\n      show_track_button: false,\n      show_cancel_button: false,\n      show_report_button: true,\n      show_feedback_button: true,\n      primary_label: 'Completed',\n      secondary_label: 'Leave Feedback',\n      reason: 'booking_completed'\n    };\n  }\n\n  if (status === 'confirmed' || status === 'in_progress') {\n    return {\n      show_track_button: !trackingLocked,\n      show_cancel_button: true,\n      show_report_button: false,\n      show_feedback_button: false,\n      primary_label: status === 'in_progress' ? 'In Progress' : 'Track',\n      secondary_label: 'Cancel',\n      reason: 'booking_active'\n    };\n  }\n\n  return {\n    show_track_button: false,\n    show_cancel_button: false,\n    show_report_button: false,\n    show_feedback_button: false,\n    primary_label: status || 'Unknown',\n    secondary_label: null,\n    reason: 'unknown_status'\n  };\n}\n\nconst bookingsList = [\n  // My original bookings (excluding lost ones — they go in their own bucket)\n  ...myOriginalBookings\n    .filter(b => !iLostBookings.includes(b))\n    .map(b => ({\n      booking_id: b.booking_id,\n      service_type: b.service_type,\n      booking_date: b.booking_date,\n      slot: b.slot,\n      user_name: b.user_name || b.user_email,\n      location: b.location,\n      status: b.status,\n      price_pkr: b.final_price_pkr || b.price_pkr,\n      provider_action_locked: !!b.provider_action_locked,\n      tracking_locked: !!b.tracking_locked,\n      role: 'original',\n      ui_actions: getBookingUiActions(b, 'original')\n    })),\n\n  // Bookings reassigned TO this provider by WF7\n  ...reassignedToMe.map(b => ({\n    booking_id: b.booking_id,\n    service_type: b.service_type,\n    booking_date: b.booking_date,\n    slot: b.slot,\n    user_name: b.user_name || b.user_email,\n    location: b.location,\n    status: b.status,\n    price_pkr: b.final_price_pkr || b.price_pkr,\n    provider_action_locked: !!b.provider_action_locked,\n    tracking_locked: !!b.tracking_locked,\n    role: 'reassigned_to_me',\n    ui_actions: getBookingUiActions(b, 'reassigned_to_me')\n  })),\n\n  // Bookings this provider LOST to reschedule\n  ...iLostBookings.map(b => ({\n    booking_id: b.booking_id,\n    service_type: b.service_type,\n    booking_date: b.booking_date,\n    slot: b.slot,\n    user_name: b.user_name || b.user_email,\n    location: b.location,\n    status: b.status,\n    price_pkr: b.final_price_pkr || b.price_pkr,\n    provider_action_locked: true,\n    tracking_locked: true,\n    role: 'lost_to_reschedule',\n    ui_actions: getBookingUiActions(b, 'lost_to_reschedule')\n  }))\n];\n\n// ── ANTIGRAVITY TRACE ─────────────────────────────────────\nconst antigravityTrace = {\n  workflow: 'WF8-ProviderOptimization-v3',\n  reasoning: [\n    `STEP 1 — Fetched ${rawBookings.length} bookings via OR query (provider_id OR reassigned_to_provider_id).`,\n    `STEP 2 — Classified: ${myOriginalBookings.length} original, ${reassignedToMe.length} reassigned-to-me, ${iLostBookings.length} lost-to-reschedule.`,\n    `STEP 3 — Workload today: ${confirmedToday.length}/${maxDailyBookings} (${utilizationRate}%). Status: ${workloadStatus}.`,\n    `STEP 4 — Earnings from ${completedAll.length} completed jobs (incl. reassigned): PKR ${totalEarnings}. Avg: PKR ${avgEarningPerJob}. Fairness: ${earningFairness}.`,\n    `STEP 5 — Reputation: ${ratings.length} in-app ratings, avg ${inAppAvgRating ?? 'N/A'}. Google Places: ${googleRating ?? 'N/A'} (${googleReviewCount} reviews). Health: ${reputationHealth}.`,\n    `STEP 6 — Cancellations: ${cancelledAll.length}/${totalBookings}. Rate: ${(cancellationRate*100).toFixed(0)}%. Status: ${cancellationStatus}.`,\n    `STEP 7 — WF2 enrichment: ${wf2Profile ? 'SUCCESS — matched provider profile merged from Code in JavaScript extractor' : 'UNAVAILABLE — graceful degradation'}.`,\n    `STEP 8 — Reschedule impact: lost ${iLostBookings.length}, gained ${reassignedToMe.length}.`,\n    `STEP 9 — Generated ${tips.length} tips. Built ${bookingsList.length} booking entries with ui_actions.`\n  ],\n  data_sources: {\n    provider_bookings: 'Supabase OR query: provider_id OR reassigned_to_provider_id',\n    platform_bookings: 'Supabase all completed rows',\n    ratings: 'customer_rating from WF5 + Google Places from WF2',\n    flags: 'flagged_for_review from WF6',\n    cancellations: 'cancellation_reason from WF7',\n    earnings: 'final_price_pkr from WF5 completed stage',\n    enrichment: wf2Profile ? 'WF2 — matched provider via Code in JavaScript extractor' : 'unavailable'\n  },\n  confidence: 95\n};\n\nconsole.log('=== WF8 Optimization Engine v3 ===');\nconsole.log('Original bookings:', myOriginalBookings.length, '| Reassigned to me:', reassignedToMe.length);\nconsole.log('Utilization:', utilizationRate + '%', workloadStatus);\nconsole.log('WF2 enrich:', wf2Profile ? `OK — ${wf2Profile.name || intake.provider_id}` : 'SKIP');\n\nreturn [{ json: {\n  status: 'provider_dashboard',\n  provider_id: intake.provider_id,\n  provider_name: enrichedProfile.provider_name || intake.provider_name,\n  date: today,\n\n  profile: enrichedProfile,\n\n  workload: {\n    bookings_today: confirmedToday.length,\n    max_capacity: maxDailyBookings,\n    utilization_rate_pct: utilizationRate,\n    status: workloadStatus,\n    slots_booked_today: bookedSlotsToday,\n    slots_open_today: openSlotsToday,\n    slots_remaining: openSlotsToday.length\n  },\n\n  earnings: {\n    total_completed_jobs: completedAll.length,\n    total_earnings_pkr: totalEarnings,\n    avg_per_job_pkr: avgEarningPerJob,\n    platform_avg_pkr: platformAvg,\n    earning_index: earningIndex,\n    earning_fairness: earningFairness,\n    note: 'Includes earnings from bookings reassigned to this provider via WF7'\n  },\n\n  reputation: {\n    avg_rating: avgRating,\n    rating_source: ratingSource,\n    google_rating: googleRating,\n    google_review_count: googleReviewCount,\n    in_app_avg_rating: inAppAvgRating,\n    total_in_app_ratings: ratings.length,\n    five_star_count: fiveStarCount,\n    low_rating_count: lowRatingCount,\n    flagged_bookings: flaggedCount,\n    reputation_health: reputationHealth\n  },\n\n  cancellations: {\n    total_cancelled: cancelledAll.length,\n    cancellation_rate_pct: Math.round(cancellationRate * 100),\n    status: cancellationStatus\n  },\n\n  reschedule_impact: rescheduleImpact,\n\n  loyalty: {\n    repeat_customers: repeatCustomers.length,\n    repeat_customer_list: repeatCustomers.slice(0, 5),\n    insight: loyaltyInsight,\n    suggested_discount_pct: repeatCustomers.length > 0 ? 5 : 0\n  },\n\n  demand_forecast: {\n    recommended_slots: recommendedSlots,\n    peak_insight: `Peak demand is at ${recommendedSlots[0]?.slot || '10:00'}. Being available then maximizes bookings.`\n  },\n\n  bookings: bookingsList,\n\n  rate_optimization: rateSuggestion,\n  optimization_tips: tips,\n  antigravity_trace: antigravityTrace,\n\n  simulated_whatsapp:\n    `Provider Dashboard — Khadmat AI v3\\n` +\n    `Date: ${today}\\n` +\n    `Workload: ${confirmedToday.length}/${maxDailyBookings} (${workloadStatus})\\n` +\n    `Earnings avg: PKR ${avgEarningPerJob} (${earningFairness})\\n` +\n    `Rating: ${avgRating ?? 'No ratings yet'}/5 (${reputationHealth})\\n` +\n    `Reschedule: -${iLostBookings.length} lost / +${reassignedToMe.length} gained\\n` +\n    `Top tip: ${tips[0] || 'Keep it up!'}`,\n\n  workflow: 'WF8-ProviderOptimization-v3',\n  timestamp: now.toISOString()\n}}];"
+      },
+      "id": "42a875fa-cb08-4593-865d-4ab52738fdae",
+      "name": "WF8 — Optimization Engine",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        832,
+        1056
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings?select=slot,price_pkr,final_price_pkr,status&status=eq.completed",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "85bf8dfe-795c-48b2-92c7-50b81e1cb58f",
+      "name": "Fetch Platform Bookings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        1056
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "=https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings?or=(provider_id.eq.{{ $json.provider_id }},reassigned_to_provider_id.eq.{{ $json.provider_id }})&select=booking_id,user_name,user_email,service_type,provider_id,provider_name,location,slot,booking_date,price_pkr,final_price_pkr,status,customer_rating,flagged_for_review,cancellation_reason,provider_action_locked,tracking_locked,reassigned_to_provider_id,reassigned_from_provider_id,new_provider_name,new_provider_id,rescheduled_to_booking_id,booking_visibility,tracking_status,tracked_once",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6aa2a01f-e839-4c9a-b836-4de3d40969a6",
+      "name": "Fetch Provider Bookings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -336,
+        1056
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "8be79a14-d82b-459e-a85a-bbbf754484f8",
+      "name": "Respond — Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -336,
+        736
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "validation-check",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "validation_error",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "72ac62af-448e-4daf-9977-a203c26c8ed9",
+      "name": "Validation Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -576,
+        896
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF8 — INTAKE & VALIDATOR\n// Expected fields:\n//   provider_id     (required — Google Place ID or email)\n//   provider_name   (optional)\n//   base_rate_pkr   (optional, default 900)\n//   max_daily_bookings (optional, default 4)\n// ============================================================\nconst body = $input.first().json.body || $input.first().json;\n\nif (!body.provider_id) {\n  return [{ json: {\n    status: 'validation_error',\n    message: 'provider_id is required',\n    workflow: 'WF8-Intake'\n  }}];\n}\n\nconst today = new Date().toISOString().split('T')[0];\n\nconsole.log('=== WF8 Provider Optimization ===');\nconsole.log('Provider ID:', body.provider_id);\nconsole.log('Date:', today);\n\nreturn [{ json: {\n  provider_id: body.provider_id,\n  provider_name: body.provider_name || 'Provider',\n  base_rate_pkr: body.base_rate_pkr || 900,\n  max_daily_bookings: body.max_daily_bookings || 4,\n  today\n}}];"
+      },
+      "id": "71d20304-a047-4606-9c48-8badbb6da97e",
+      "name": "WF8 — Intake & Validator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -816,
+        896
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "khadmat-provider-dashboard",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "f07a7e5e-574d-40bb-bb58-b9ff3c93349c",
+      "name": "WF8 — HTTP Trigger1",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1040,
+        912
+      ],
+      "webhookId": "khadmat-provider-dashboard-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// MERGE: Booking + Provider Enriched Profile\n// Input: array with mixed booking + provider profile objects\n// Output: clean merged dashboard-ready structure\n// ============================================================\n\nconst items = $input.all().map(i => i.json);\n\n// Separate booking and provider profile\nconst booking = items.find(i => i.status); // has status → booking\nconst provider = items.find(i => i.place_id || i.rating !== undefined);\n\n// Safety check\nif (!booking || !provider) {\n  return [{\n    json: {\n      error: \"Missing booking or provider profile in input\",\n      received: items\n    }\n  }];\n}\n\n// ============================================================\n// MERGED OUTPUT\n// ============================================================\n\nconst merged = {\n  // --- Booking info ---\n  booking: {\n    slot: booking.slot,\n    status: booking.status,\n    price_pkr: booking.price_pkr,\n    final_price_pkr: booking.final_price_pkr\n  },\n\n  // --- Provider info ---\n  provider: {\n    id: provider.id,\n    name: provider.name,\n    owner: provider.owner,\n    services: provider.services,\n    areas: provider.areas,\n    coordinates: provider.coordinates,\n    base_rate_pkr: provider.base_rate_pkr,\n    rating: provider.rating,\n    review_count: provider.review_count,\n    on_time_score: provider.on_time_score,\n    cancellation_rate: provider.cancellation_rate,\n    availability_slots: provider.availability_slots,\n    active_bookings: provider.active_bookings,\n    max_daily_bookings: provider.max_daily_bookings,\n    at_capacity: provider.at_capacity,\n    distance_km: provider.distance_km,\n    verified: provider.verified,\n    reputation_score: provider.reputation_score,\n    google_maps_url: provider.google_maps_url,\n    photos: provider.photos,\n    computed_score: provider.computed_score,\n    score_breakdown: provider.score_breakdown\n  },\n\n  // --- Derived insights (optional but useful) ---\n  insights: {\n    is_available: provider.availability_slots?.includes(booking.slot),\n    price_match: booking.final_price_pkr <= provider.base_rate_pkr,\n    distance_score: provider.score_breakdown?.distance || null,\n    recommendation_score: provider.computed_score || null\n  }\n};\n\nreturn [{ json: merged }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        1056
+      ],
+      "id": "4c4a8f44-fcc2-45cf-ba4e-9eb06b171c6a",
+      "name": "Code in JavaScript1"
+    }
+  ],
+  "pinData": {
+    "WF8 — HTTP Trigger1": [
+      {
+        "json": {
+          "headers": {
+            "host": "n8ndigitalstudio.duckdns.org",
+            "x-real-ip": "34.34.244.102",
+            "x-forwarded-for": "34.34.244.102",
+            "x-forwarded-proto": "https",
+            "connection": "upgrade",
+            "content-length": "125",
+            "accept": "application/json",
+            "content-type": "application/json",
+            "user-agent": "axios/1.16.1",
+            "accept-encoding": "gzip, compress, deflate, br"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "provider_id": "ChIJjU8ANrAJGTkRI02gipMCDtE",
+            "message": "",
+            "timestamp": "2026-05-20T18:59:27.504Z",
+            "agent_id": "khidmatgaar_v1"
+          },
+          "webhookUrl": "https://n8ndigitalstudio.duckdns.org/webhook/khadmat-provider-dashboard",
+          "executionMode": "production"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Fetch Provider Profile (WF2 Enrich)": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF8 — Optimization Engine": {
+      "main": [
+        [
+          {
+            "node": "Respond — Provider Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Platform Bookings": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Provider Bookings": {
+      "main": [
+        [
+          {
+            "node": "Fetch Provider Profile (WF2 Enrich)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Platform Bookings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation Error?": {
+      "main": [
+        [
+          {
+            "node": "Respond — Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch Provider Bookings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF8 — Intake & Validator": {
+      "main": [
+        [
+          {
+            "node": "Validation Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF8 — HTTP Trigger1": {
+      "main": [
+        [
+          {
+            "node": "WF8 — Intake & Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "WF8 — Optimization Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "818a8ebf-88ec-46b4-8d55-29a7bb13792c",
+  "meta": {
+    "instanceId": "4849cacf29ece9bf383abb54fb2646c4bb8efa5b8d10cc48771c12ba3d91b0b0"
+  },
+  "id": "r27shaQEzgnSVlsh",
+  "tags": [
+    {
+      "updatedAt": "2026-05-15T20:17:04.638Z",
+      "createdAt": "2026-05-15T20:17:04.638Z",
+      "id": "7TIUqObclsfafZNc",
+      "name": "Hackathon"
+    },
+    {
+      "updatedAt": "2026-05-15T20:17:04.629Z",
+      "createdAt": "2026-05-15T20:17:04.629Z",
+      "id": "TQ0mNmjGv8rqs8UG",
+      "name": "Khadmat AI"
+    }
+  ]
+}

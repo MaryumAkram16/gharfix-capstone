@@ -1,0 +1,1157 @@
+{
+  "name": "Khadmat AI —Service Quality Loop",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "khadmat-quality",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "8baa59e6-a68e-4fe8-a50f-fca90c152ced",
+      "name": "WF5 — HTTP Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        1728
+      ],
+      "webhookId": "66b4aa87-a42e-4135-b82e-b741a3d4167d"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF5 — ROUTER: Detect which stage of the service lifecycle\n// Actions:\n//   'en_route'  → provider is heading to customer\n//   'arrived'   → provider arrived on site\n//   'completed' → service done, trigger feedback\n//   'feedback'  → customer submits rating + review\n// ============================================================\nconst body = $input.first().json.body;\nconst action = body.action || 'en_route';\n\nconst validActions = ['en_route', 'arrived', 'completed', 'feedback'];\nif (!validActions.includes(action)) {\n  return [{ json: {\n    status: 'error',\n    message: `Invalid action '${action}'. Must be one of: ${validActions.join(', ')}`,\n    workflow: 'WF5-Router'\n  }}];\n}\n\nconsole.log('=== WF5 Quality Loop Router ===');\nconsole.log('Action:', action);\nconsole.log('Booking ID:', body.booking_id);\n\nreturn [{ json: { ...body, action } }];"
+      },
+      "id": "13c7ae3b-d786-4e00-a56d-853cb71f8926",
+      "name": "WF5 — Router",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1408,
+        1728
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "action-en-route",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "en_route",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1af52a69-a9ea-462d-83a3-f8f773e3b219",
+      "name": "Is En Route?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2464,
+        1728
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF5 — EN ROUTE UPDATE\n// Simulates provider heading to customer location.\n// Updates booking status in Supabase to 'en_route'.\n// Returns ETA + WhatsApp-style notification.\n// ============================================================\nconst data = $input.first().json;\n\nif (!data.booking_id) {\n  return [{ json: { status: 'error', message: 'booking_id is required', workflow: 'WF5-EnRoute' }}];\n}\n\nconst distanceKm = parseFloat(data.distance_km) || (Math.random() * 10 + 5);\nconst etaMinutes = Math.round(distanceKm * 3 + 5);\nconst etaText = etaMinutes <= 10 ? 'approximately 10 minutes'\n  : etaMinutes <= 20 ? 'approximately 15-20 minutes'\n  : `approximately ${etaMinutes} minutes`;\n\nconst now = new Date();\nconst arrivalTime = new Date(now.getTime() + etaMinutes * 60000);\nconst arrivalStr = arrivalTime.toTimeString().substring(0, 5);\n\nconst enRouteUpdate = {\n  status: 'en_route',\n  booking_id: data.booking_id,\n  provider_name: data.provider_name || 'Your Provider',\n  service_type: data.service_type,\n  user_email: data.user_email,\n  eta_minutes: etaMinutes,\n  estimated_arrival_time: arrivalStr,\n  customer_location: data.location,\n  live_tracking_simulated: true,\n  simulated_whatsapp:\n    `Assalam o Alaikum!\\n` +\n    `Your provider ${data.provider_name || 'is'} is on the way!\\n` +\n    `ETA: ${etaText} (around ${arrivalStr})\\n` +\n    `Booking: ${data.booking_id}`,\n  checklist_reminder: [\n    'Ensure access to service area',\n    'Have booking ID ready: ' + data.booking_id,\n    'Cash prepared: PKR ' + (data.price_pkr || 'as quoted')\n  ],\n  workflow: 'WF5-EnRoute',\n  timestamp: now.toISOString()\n};\n\nconsole.log('=== WF5 En Route ===');\nconsole.log('ETA:', etaMinutes, 'mins ->', arrivalStr);\n\nreturn [{ json: enRouteUpdate }];"
+      },
+      "id": "218aa9dc-f004-4df1-bcf8-43903f3ff93a",
+      "name": "En Route Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        1152
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings?booking_id=eq.{{ $('WF5 — Router').first().json.booking_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"last_action\": \"en_route\",\n  \"current_status\": \"en_route\",\n  \"trace_key\": \"{{$json.booking_id}}-en_route\"\n}",
+        "options": {}
+      },
+      "id": "f676c4ba-e6b4-4220-9d02-a1936ee07c2c",
+      "name": "Supabase — Status: en_route",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2912,
+        1152
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('En Route Update').first().json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "af864082-c220-44e0-96bd-790dc0a2198a",
+      "name": "Respond — En Route",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3136,
+        1152
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "action-arrived",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "arrived",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "edff1f0d-e7c2-4c5f-bbc8-15d5dd9474e1",
+      "name": "Is Arrived?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        1824
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF5 — ARRIVED ON SITE\n// Provider reached customer. Log arrival. Return service checklist.\n// ============================================================\nconst data = $('WF5 — Router').first().json;\nconst now = new Date();\n\nconst serviceChecklists = {\n  'AC repair':       ['Check power supply & thermostat', 'Inspect filters and coils', 'Test compressor operation', 'Check refrigerant pressure', 'Clean drainage pipe', 'Test cooling performance', 'Document fault found'],\n  'AC installation': ['Verify wall bracket position', 'Run copper piping', 'Connect electrical wiring', 'Install indoor unit', 'Install outdoor unit', 'Vacuum and charge refrigerant', 'Test full system operation'],\n  'AC gas refill':   ['Check for leaks first', 'Evacuate old gas if needed', 'Recharge refrigerant to spec', 'Check operating pressure', 'Test cooling performance'],\n  'plumber':         ['Identify leak/blockage source', 'Turn off water supply', 'Replace or repair component', 'Check for secondary leaks', 'Restore water supply and test'],\n  'electrician':     ['Check circuit breaker/fuse', 'Test voltage at fault point', 'Identify wiring issue', 'Repair or replace component', 'Test load under full power'],\n  'carpenter':       ['Measure and mark work area', 'Prepare materials', 'Execute carpentry task', 'Sand and finish if needed', 'Clean work area'],\n  'painter':         ['Prepare surface (clean, sand, fill)', 'Apply primer if needed', 'Apply first coat', 'Allow drying time', 'Apply final coat', 'Inspect finish quality'],\n  'generator mechanic': ['Check fuel level and oil', 'Inspect spark plugs', 'Test battery voltage', 'Start and monitor RPM', 'Check output voltage', 'Document work done']\n};\n\nconst serviceKey = Object.keys(serviceChecklists).find(k =>\n  (data.service_type || '').toLowerCase().includes(k.toLowerCase())\n) || 'AC repair';\n\nconst checklist = serviceChecklists[serviceKey].map((item, i) => ({\n  step: i + 1,\n  task: item,\n  completed: false,\n  photo_required: i === serviceChecklists[serviceKey].length - 1\n}));\n\nconst arrivedPayload = {\n  status: 'arrived',\n  booking_id: data.booking_id,\n  provider_name: data.provider_name,\n  service_type: data.service_type,\n  user_email: data.user_email,\n  arrival_time: now.toTimeString().substring(0, 5),\n  arrival_timestamp: now.toISOString(),\n  customer_location: data.location,\n  service_checklist: checklist,\n  photo_evidence_placeholder: {\n    before_photo: 'PHOTO_UPLOAD_SLOT — Before work begins',\n    after_photo:  'PHOTO_UPLOAD_SLOT — After work completed'\n  },\n  simulated_whatsapp:\n    `Provider Arrived — Khadmat AI\\n` +\n    `${data.provider_name} pahunch gaye hain!\\n` +\n    `Arrival: ${now.toTimeString().substring(0, 5)}\\n` +\n    `Service: ${data.service_type}\\n` +\n    `Booking: ${data.booking_id}\\n` +\n    `Kaam shuru ho raha hai.`,\n  workflow: 'WF5-Arrived',\n  timestamp: now.toISOString()\n};\n\nconsole.log('=== WF5 Arrived ===');\nconsole.log('Checklist items:', checklist.length);\n\nreturn [{ json: arrivedPayload }];"
+      },
+      "id": "c83e5a7b-ffb1-4abc-8e50-70ca1e46aa08",
+      "name": "Arrived — Build Checklist",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2912,
+        1440
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings?booking_id=eq.{{ $('WF5 — Router').first().json.booking_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"last_action\": \"arrived\",\n  \"current_status\": \"arrived\",\n  \"trace_key\": \"{{$json.booking_id}}-arrived\"\n}",
+        "options": {}
+      },
+      "id": "c09872ea-90c5-47ba-9cb6-fce051bf6c93",
+      "name": "Supabase — Status: in_progress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3136,
+        1344
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Arrived — Build Checklist').first().json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "7d2aa82a-11a2-43b0-b7da-1e05cb58de29",
+      "name": "Respond — Arrived",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3136,
+        1536
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "action-completed",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "24cccf80-bf77-420b-86af-0b0a7381b650",
+      "name": "Is Completed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2912,
+        2016
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF5 — SERVICE COMPLETED\n// Provider marks job done. Log completion time.\n// Detect price overrun. Trigger feedback request.\n// ============================================================\nconst data = $('WF5 — Router').first().json;\nconst now = new Date();\n\nlet durationText = 'Not recorded';\nif (data.arrival_time) {\n  const [arrH, arrM] = data.arrival_time.split(':').map(Number);\n  const arrivalMs = new Date();\n  arrivalMs.setHours(arrH, arrM, 0, 0);\n  const durationMins = Math.round((now - arrivalMs) / 60000);\n  durationText = durationMins > 0 ? `${durationMins} minutes` : 'Under 1 minute';\n}\n\nconst finalPrice = parseInt(data.final_price_pkr) || parseInt(data.price_pkr) || 0;\nconst quotedPrice = parseInt(data.price_pkr) || 0;\nconst priceVariance = finalPrice - quotedPrice;\nconst priceStatus = priceVariance === 0 ? 'exact' : priceVariance > 0 ? 'overrun' : 'underrun';\n\nconst completionSummary = {\n  status: 'completed',\n  booking_id: data.booking_id,\n  provider_name: data.provider_name,\n  service_type: data.service_type,\n  user_email: data.user_email,\n  location: data.location,\n  completion_time: now.toTimeString().substring(0, 5),\n  completion_timestamp: now.toISOString(),\n  duration: durationText,\n  payment: {\n    quoted_pkr: quotedPrice,\n    final_pkr: finalPrice,\n    variance_pkr: priceVariance,\n    price_status: priceStatus,\n    price_note: priceVariance > 0\n      ? `Final price PKR ${priceVariance} zyada hai quote se. Dispute ke liye WF6 mein report karein.`\n      : priceVariance < 0\n      ? `Final price PKR ${Math.abs(priceVariance)} kam hai — discount!`\n      : 'Final price matches quote exactly.'\n  },\n  photo_evidence_placeholder: {\n    before_photo: data.before_photo_url || 'BEFORE_PHOTO — Not uploaded',\n    after_photo:  data.after_photo_url  || 'AFTER_PHOTO — Not uploaded'\n  },\n  checklist_completed: data.checklist_completed || false,\n  feedback_requested: true,\n  feedback_payload_example: {\n    action: 'feedback',\n    booking_id: data.booking_id,\n    provider_id: data.provider_id,\n    provider_name: data.provider_name,\n    rating: 5,\n    review: 'Bahut acha kaam kiya'\n  },\n  simulated_whatsapp:\n    `Service Complete — Khadmat AI\\n` +\n    `${data.provider_name} ne kaam mukammal kar diya!\\n` +\n    `Service: ${data.service_type}\\n` +\n    `Final Amount: PKR ${finalPrice}\\n` +\n    `Booking: ${data.booking_id}\\n` +\n    `Apni feedback zaroor dein!`,\n  workflow: 'WF5-Completed',\n  timestamp: now.toISOString()\n};\n\nconsole.log('=== WF5 Completed ===');\nconsole.log('Price status:', priceStatus, '| Final:', finalPrice, '| Quoted:', quotedPrice);\n\nreturn [{ json: completionSummary }];"
+      },
+      "id": "a901940f-4ce5-420e-8ca4-d388a24867ac",
+      "name": "Service Completed — Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3136,
+        1824
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings?booking_id=eq.{{ $('WF5 — Router').first().json.booking_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"last_action\": \"completed\",\n  \"current_status\": \"completed\",\n  \"trace_key\": \"{{$json.booking_id}}-completed\"\n}",
+        "options": {}
+      },
+      "id": "5d34b529-96ea-443e-9a95-70f443ef7d7d",
+      "name": "Supabase — Status: completed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3360,
+        1728
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Service Completed — Summary').first().json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "82b16a4b-871c-4ebb-8110-5615e7ca21f1",
+      "name": "Respond — Completed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3360,
+        1920
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF5 — FEEDBACK PROCESSOR (UPDATED)\n// Accepts: images (base64), transcript text, sentiment analysis\n// Now properly validates and passes through image data\n// ============================================================\nconst data = $('WF5 — Router').first().json;\n\nif (!data.booking_id || !data.rating) {\n  return [{ json: {\n    status: 'error',\n    message: 'booking_id and rating (1-5) are required for feedback',\n    workflow: 'WF5-Feedback'\n  }}];\n}\n\nconst rating = parseFloat(data.rating);\nif (rating < 1 || rating > 5) {\n  return [{ json: {\n    status: 'error',\n    message: 'Rating must be between 1 and 5',\n    received_rating: rating,\n    workflow: 'WF5-Feedback'\n  }}];\n}\n\nconst review = data.review || '';\nconst transcript = data.transcript_text || '';\nconst providerName = data.provider_name || 'Provider';\n\n// ── Validate and cap image array ─────────────────────────────\n// Frontend sends up to 3 resized base64 JPEGs\nconst rawImages = Array.isArray(data.image_base64_array)\n  ? data.image_base64_array\n  : [];\n\n// Validate each entry is a non-empty string starting with data:image or raw base64\nconst validImages = rawImages.filter(img =>\n  typeof img === 'string' && img.length > 100\n);\n\nconst imageCount = validImages.length;\nconst hasImages = imageCount > 0;\n\n// ── Transcript validation ─────────────────────────────────────\nconst transcriptIncluded = data.transcript_included === true\n  || (typeof transcript === 'string' && transcript.trim().length > 0);\n\n// ── Sentiment Keywords ────────────────────────────────────────\nconst positiveKeywords = ['acha', 'badhiya', 'zabardast', 'great', 'excellent',\n  'good', 'perfect', 'fast', 'professional', 'recommend', 'satisfied',\n  'happy', 'best', 'top', 'waqt par', 'punctual'];\nconst negativeKeywords = ['bura', 'ganda', 'late', 'delay', 'kharab', 'worst',\n  'bad', 'slow', 'unprofessional', 'disappointed', 'overcharge',\n  'zyada charge', 'no show', 'nahi aaya', 'bakwaas'];\n\nconst fullText = (review + ' ' + transcript).toLowerCase();\nconst positiveFound = positiveKeywords.filter(w => fullText.includes(w));\nconst negativeFound = negativeKeywords.filter(w => fullText.includes(w));\n\nconst sentiment = negativeFound.length > positiveFound.length ? 'negative'\n  : positiveFound.length > negativeFound.length ? 'positive'\n  : rating >= 4 ? 'positive' : rating <= 2 ? 'negative' : 'neutral';\n\n// ── Reputation Score Recalculation ───────────────────────────\nconst oldRating = 4.1;\nconst reviewCount = 28;\nconst newRating = parseFloat(\n  ((oldRating * reviewCount + rating) / (reviewCount + 1)).toFixed(2)\n);\nconst delta = parseFloat((newRating - oldRating).toFixed(2));\n\n// ── Matching Impact ───────────────────────────────────────────\nlet matchingImpact = 'none';\nlet flagForReview = false;\nif (rating <= 2) { matchingImpact = 'score_penalized'; flagForReview = true; }\nelse if (rating >= 5 && sentiment === 'positive') { matchingImpact = 'score_boosted'; }\n\n// ── Auto-escalate to WF6 if very bad ─────────────────────────\nconst triggerDispute = rating <= 2\n  || (sentiment === 'negative' && negativeFound.length >= 2);\n\nconst feedbackResult = {\n  status: 'feedback_received',\n  booking_id: data.booking_id,\n  provider_id: data.provider_id,\n  provider_name: providerName,\n  service_type: data.service_type,\n  user_email: data.user_email,\n  submitted_rating: rating,\n  review_text: review,\n  transcript_text: transcript,\n  transcript_included: transcriptIncluded,\n  sentiment,\n  sentiment_signals: {\n    positive_keywords_found: positiveFound,\n    negative_keywords_found: negativeFound\n  },\n  // Image evidence — validated and counted\n  images_attached: imageCount,\n  image_count: imageCount,\n  has_image_evidence: hasImages,\n  image_base64_array: validImages,  // passes through to Supabase write\n  evidence_summary: hasImages\n    ? `${imageCount} photo(s) attached as evidence`\n    : transcriptIncluded\n    ? 'Voice transcript included as evidence'\n    : 'Text review only',\n  reputation_update: {\n    old_rating: oldRating,\n    new_rating: newRating,\n    delta,\n    review_count_new: reviewCount + 1,\n    direction: delta >= 0 ? 'Improved' : 'Declined'\n  },\n  matching_impact: {\n    impact_type: matchingImpact,\n    flag_for_manual_review: flagForReview,\n    future_ranking_note: matchingImpact === 'score_penalized'\n      ? `${providerName} will rank lower in future searches until rating recovers.`\n      : matchingImpact === 'score_boosted'\n      ? `${providerName} gets a ranking boost — excellent review!`\n      : 'No change to ranking.'\n  },\n  escalate_to_wf6: triggerDispute,\n  escalation_reason: triggerDispute\n    ? 'Low rating or negative review keywords detected'\n    : null,\n  customer_message: rating >= 4\n    ? `Shukriya! ${rating}-star review save ho gaya.${hasImages ? ' Photos bhi save ho gayi hain.' : ''} ${providerName} ko future mein priority di jaegi.`\n    : rating === 3\n    ? `Shukriya feedback ke liye. Hum ${providerName} ki service improve karne ki koshish karenge.`\n    : `Humein afsos hai. Hum is mamle ko investigate karenge aur aap se rabta karenge.`,\n  workflow: 'WF5-Feedback',\n  timestamp: new Date().toISOString()\n};\n\nconsole.log('=== WF5 Feedback ===');\nconsole.log('Rating:', rating, '| Sentiment:', sentiment);\nconsole.log('Images validated:', imageCount, '(received:', rawImages.length, ')');\nconsole.log('Transcript included:', transcriptIncluded, '| Length:', transcript.length);\nconsole.log('New reputation:', newRating);\nconsole.log('Escalate to WF6:', triggerDispute);\n\nreturn [{ json: feedbackResult }];"
+      },
+      "id": "6275274c-37b6-4fb8-b9fa-47f908289f60",
+      "name": "Feedback Processor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3136,
+        2208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings?booking_id=eq.{{ $('WF5 — Router').first().json.booking_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"customer_rating\": {{ $json.submitted_rating }},\n  \"customer_review\": {{ JSON.stringify($json.review_text || '') }},\n  \"customer_transcript\": {{ JSON.stringify($json.transcript_text || '') }},\n  \"feedback_sentiment\": \"{{ $json.sentiment }}\",\n  \"images_attached\": {{ $json.images_attached || 0 }},\n  \"transcript_included\": {{ $json.transcript_included || false }},\n  \"image_base64_data\": {{ JSON.stringify($json.image_base64_array && $json.image_base64_array.length > 0 ? JSON.stringify($json.image_base64_array) : null) }},\n  \"provider_new_rating\": {{ $json.reputation_update.new_rating }},\n  \"flagged_for_review\": {{ $json.matching_impact.flag_for_manual_review }},\n\n  \"status\": \"feedback_done\",\n  \"last_action\": \"feedback\",\n  \"tracking_status\": \"tracked\",\n  \"tracked_once\": true,\n  \"tracking_locked\": true\n}",
+        "options": {}
+      },
+      "id": "1f778eb2-e8e4-4611-9698-2a79d3101fc5",
+      "name": "Supabase — Save Feedback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3360,
+        2112
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "escalate-check",
+              "leftValue": "={{ $('Feedback Processor').first().json.escalate_to_wf6 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2a6e43e5-8592-43fe-a182-afaa890cf458",
+      "name": "Escalate to WF6?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        2304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://n8ndigitalstudio.duckdns.org/webhook/khadmat-dispute",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"trigger\": \"low_rating_auto_escalation\",\n  \"booking_id\": \"{{ $('Feedback Processor').first().json.booking_id }}\",\n  \"provider_id\": \"{{ $('Feedback Processor').first().json.provider_id }}\",\n  \"provider_name\": \"{{ $('Feedback Processor').first().json.provider_name }}\",\n  \"service_type\": \"{{ $('Feedback Processor').first().json.service_type }}\",\n  \"rating\": {{ $('Feedback Processor').first().json.submitted_rating }},\n  \"review\": \"{{ $('Feedback Processor').first().json.review_text }}\",\n  \"sentiment\": \"{{ $('Feedback Processor').first().json.sentiment }}\",\n  \"user_email\": \"{{ $json.user_email }}\",\n  \"dispute_type\": \"quality_complaint\",\n  \"auto_escalated\": true\n}",
+        "options": {}
+      },
+      "id": "cc41ec84-9846-48f4-86b6-9fa06d0ac194",
+      "name": "Call WF6 — Dispute Handler",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3584,
+        2208
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"feedback_saved_and_escalated\",\n  \"tracking_locked\": true,\n  \"show_track_button\": false,\n  \"show_feedback_button\": false,\n  \"booking_id\": {{ JSON.stringify($('Feedback Processor').first().json.booking_id) }},\n  \"feedback\": {{ JSON.stringify($('Feedback Processor').first().json) }},\n  \"wf6_triggered\": true,\n  \"message\": \"{{ $json.customer_message }}.\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "2a3d3b24-17a4-4956-9b2e-ae579e2d19aa",
+      "name": "Respond — Escalated to WF6",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3808,
+        2208
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"feedback_saved\",\n  \"tracking_locked\": true,\n  \"show_track_button\": false,\n  \"show_feedback_button\": false,\n  \"booking_id\": {{ JSON.stringify($('Feedback Processor').first().json.booking_id) }},\n  \"feedback\": {{ JSON.stringify($('Feedback Processor').first().json) }},\n  \"message\": \"Shukriya! Aapka feedback save ho gaya. Tracking complete.\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "79078ee3-c321-4606-a344-4ff636ff291e",
+      "name": "Respond — Feedback Saved",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3584,
+        2400
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.user_email }}",
+        "subject": "=Your GharFix Provider is On the Way! 🚗 (Booking ID: {{ $json.booking_id }})",
+        "message": "=<!DOCTYPE html>\n<html>\n<body style=\"font-family: Arial, sans-serif; line-height: 1.6; color: #333;\">\n  <div style=\"max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;\">\n\n    <h2 style=\"color: #2c5aa0;\">Your Provider is On the Way! 🚗</h2>\n\n    <p>Dear Valued Customer,</p>\n\n    <p>Good news! Your GharFix provider, <strong>{{ $json.provider_name }}</strong>, is now en route to your location.</p>\n\n    <hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\">\n\n    <h3 style=\"color: #2c5aa0;\">Service Details:</h3>\n\n    <ul style=\"list-style: none; padding: 0;\">\n      <li><strong>Booking ID:</strong> {{ $json.booking_id }}</li>\n      <li><strong>Service:</strong> {{ $json.service_type }}</li>\n      <li><strong>Estimated Arrival:</strong> {{ $json.estimated_arrival_time }} (in approximately {{ $json.eta_minutes }} minutes)</li>\n      <li><strong>Location:</strong> {{ $json.customer_location }}</li>\n    </ul>\n\n    <hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\">\n\n    <p>Please ensure you are ready for their arrival.</p>\n\n    <p style=\"margin-top: 30px;\">\n      Sincerely,<br>\n      <strong>The GharFix Team</strong>\n    </p>\n\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        3360,
+        1152
+      ],
+      "id": "7438ecf0-ec67-4961-b6cc-abdbcda409a0",
+      "name": "Send a message",
+      "webhookId": "376adc70-e2b1-46a4-b9be-f7f34bd57e85",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "nTOYRDSTzQdF6yEt",
+          "name": "gharfix end email"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Arrived — Build Checklist').first().json.user_email }}",
+        "subject": "=Your Gharfix Provider Has Arrived! ✅ (Booking ID: {{ $json.booking_id }})",
+        "message": "=<!DOCTYPE html>\n<html>\n<body style=\"font-family: Arial, sans-serif; line-height: 1.6; color: #333;\">\n  <div style=\"max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;\">\n\n    <h2 style=\"color: #2c5aa0;\">Your Provider Has Arrived! ✅</h2>\n\n    <p>Dear Valued Customer,</p>\n\n    <p>Your GharFix provider, <strong>{{ $json.provider_name }}</strong>, has arrived at your location.</p>\n\n    <hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\">\n\n    <h3 style=\"color: #2c5aa0;\">Service Details:</h3>\n\n    <ul style=\"list-style: none; padding: 0;\">\n      <li><strong>Booking ID:</strong> {{ $json.booking_id }}</li>\n      <li><strong>Service:</strong> {{ $json.service_type }}</li>\n      <li><strong>Arrival Time:</strong> {{ $json.arrival_time }}</li>\n      <li><strong>Location:</strong> {{ $json.customer_location }}</li>\n    </ul>\n\n    <hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\">\n\n    <p>Your service is about to begin. If you have any questions, please speak directly with your provider.</p>\n\n    <p style=\"margin-top: 30px;\">\n      Sincerely,<br>\n      <strong>The GharFix Team</strong>\n    </p>\n\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        3360,
+        1536
+      ],
+      "id": "2e3051c4-fae2-4293-809b-180d042f4ca0",
+      "name": "Send a message1",
+      "webhookId": "1f5d0b9a-6ae8-4e31-bcf6-a7ba5d2aec00",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "nTOYRDSTzQdF6yEt",
+          "name": "gharfix end email"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $(\"Service Completed — Summary\").first().json.user_email }}",
+        "subject": "=Your GharFix Service is Complete! 🎉 (Booking ID: {{ $json.booking_id }})",
+        "message": "=<!DOCTYPE html>\n<html>\n<body style=\"font-family: Arial, sans-serif; line-height: 1.6; color: #333;\">\n  <div style=\"max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;\">\n\n    <h2 style=\"color: #2c5aa0;\">Service Complete! 🎉</h2>\n\n    <p>Dear Valued Customer,</p>\n\n    <p>Your GharFix service for Booking ID: <strong>{{ $json.booking_id }}</strong> has been successfully completed by <strong>{{ $json.provider_name }}</strong>.</p>\n\n    <hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\">\n\n    <h3 style=\"color: #2c5aa0;\">Service Summary:</h3>\n\n    <ul style=\"list-style: none; padding: 0;\">\n      <li><strong>Service:</strong> {{ $json.service_type }}</li>\n      <li><strong>Completion Time:</strong> {{ $json.completion_time }}</li>\n      <li><strong>Final Price:</strong> PKR {{ $json.payment.final_pkr }} <em>(Quoted: PKR {{ $json.payment.quoted_pkr }})</em></li>\n    </ul>\n\n    <hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\">\n\n    <p>We hope you are satisfied with the service. Please take a moment to provide your valuable feedback — it helps us maintain high-quality service!</p>\n\n    <p style=\"margin-top: 30px;\">Thank you for choosing GharFix!</p>\n\n    <p style=\"margin-top: 30px;\">\n      Sincerely,<br>\n      <strong>The GharFix Team</strong>\n    </p>\n\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        3584,
+        1920
+      ],
+      "id": "ed895316-a032-4caf-8e1c-276af822a432",
+      "name": "Send a message2",
+      "webhookId": "1f5d0b9a-6ae8-4e31-bcf6-a7ba5d2aec00",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "nTOYRDSTzQdF6yEt",
+          "name": "gharfix end email"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.user_email }}",
+        "subject": "=Thank You for Your Feedback! 🙏 (Booking ID: {{ $json.booking_id }})",
+        "message": "=<!DOCTYPE html>\n<html>\n<body style=\"font-family: Arial, sans-serif; line-height: 1.6; color: #333;\">\n  <div style=\"max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;\">\n\n    <h2 style=\"color: #2c5aa0;\">Thank You for Your Feedback! 🙏</h2>\n\n    <p>Dear Valued Customer,</p>\n\n    <p>Thank you for providing your feedback for Booking ID: <strong>{{ $json.booking_id }}</strong>.</p>\n\n    <hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\">\n\n    <h3 style=\"color: #2c5aa0;\">Your Feedback:</h3>\n\n    <ul style=\"list-style: none; padding: 0;\">\n      <li><strong>Rating:</strong> {{ $json.submitted_rating }} stars ⭐</li>\n      <li><strong>Review:</strong> {{ $json.review_text }}</li>\n    </ul>\n\n    <hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\">\n\n    <p>We appreciate you taking the time to share your experience. Your input is invaluable as we continuously strive to improve our services.</p>\n\n    <p style=\"margin-top: 30px;\">\n      Sincerely,<br>\n      <strong>The GharFix Team</strong>\n    </p>\n\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        3808,
+        2400
+      ],
+      "id": "28544841-9f3f-4e08-a6cb-45d0808fa6b8",
+      "name": "Send a message3",
+      "webhookId": "1f5d0b9a-6ae8-4e31-bcf6-a7ba5d2aec00",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "nTOYRDSTzQdF6yEt",
+          "name": "gharfix end email"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\nconst action = data.action;\nconst booking_id = data.booking_id;\n\nconst current_status = data.current_status;\nconst last_action = data.last_action;\nconst tracking_locked = data.tracking_locked;\n\n// 1. HARD LOCK CHECK — only block if explicitly locked (feedback done)\nif (tracking_locked === true || current_status === \"feedback_done\") {\n  return [{\n    json: {\n      allow: false,\n      status: \"tracking_locked\",\n      tracking_locked: true,\n      message: \"This booking has already been tracked and feedback submitted. No further actions allowed.\",\n      booking_id\n    }\n  }];\n}\n\n// 2. prevent duplicate actions\nif (last_action === action) {\n  return [{\n    json: {\n      allow: false,\n      status: \"blocked_duplicate\",\n      tracking_locked: tracking_locked === true,\n      message: `Action '${action}' already executed for this booking`,\n      booking_id\n    }\n  }];\n}\n\n// 3. Valid state transition map\nconst allowedTransitions = {\n  en_route: [\"booked\", \"confirmed\"],\n  arrived: [\"en_route\"],\n  completed: [\"arrived\"],\n  feedback: [\"completed\"]\n};\n\nconst allowedFromStates = allowedTransitions[action];\n\nif (!allowedFromStates) {\n  return [{\n    json: {\n      allow: false,\n      status: \"invalid_action\",\n      tracking_locked: tracking_locked === true,\n      message: `Unknown action '${action}'`,\n      booking_id\n    }\n  }];\n}\n\nif (!allowedFromStates.includes(current_status)) {\n  return [{\n    json: {\n      allow: false,\n      status: \"blocked_invalid_state\",\n      tracking_locked: tracking_locked === true,\n      message: `Cannot move to '${action}' from current status '${current_status}'. Expected one of: ${allowedFromStates.join(\", \")}`,\n      booking_id\n    }\n  }];\n}\n\n// Allow execution\nreturn [{\n  json: {\n    ...data,\n    allow: true,\n    tracking_locked: false,\n    traceKey: `${booking_id}-${action}`\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1824,
+        1728
+      ],
+      "id": "94eb336d-bb38-4fda-af79-7f96282089f7",
+      "name": "Trace Guard"
+    },
+    {
+      "parameters": {
+        "url": "=https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings?booking_id=eq.{{ $json.booking_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "26c4382f-5d7d-42bf-8c51-06b2f8346b78",
+      "name": "Supabase — Status: en_route1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        1728
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "25d9eb7b-f1a1-4c2a-8cc4-1a1a1f0af281",
+              "leftValue": "={{ $json.tracking_locked }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "tracking-locked-check",
+              "leftValue": "={{ $json.tracking_locked }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notTrue"
+              }
+            },
+            {
+              "id": "feedback-done-check",
+              "leftValue": "={{ $json.current_status }}",
+              "rightValue": "feedback_done",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2032,
+        1728
+      ],
+      "id": "e6ed5d6b-dda2-4468-86d6-b64bb31f31c3",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"tracking_locked\",\n  \"tracking_locked\": true,\n  \"show_track_button\": false,\n  \"show_feedback_button\": false,\n  \"message\": \"{{ $json.message }}\",\n  \"booking_id\": \"{{ $('WF5 — Router').first().json.booking_id }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2496,
+        1904
+      ],
+      "id": "d171aae6-1ab8-4590-a115-909566e6bcce",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b08d84d0-2a9a-4654-8ca1-058b15f7b920",
+              "name": "action",
+              "value": "={{ $json.action }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1632,
+        1504
+      ],
+      "id": "7b3dba6a-7183-466b-9257-3c9e02b70614",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1824,
+        1520
+      ],
+      "id": "ce4194c2-130a-4f88-9689-0ab7fb879b54",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "// WF5 — MERGE NODE (clean production merge)\n\nconst items = $input.all();\n\nconst actionObj = items.find(i => i.json.action);\nconst bookingObj = items.find(i => i.json.booking_id);\n\nif (!bookingObj) {\n  return [{\n    json: {\n      status: \"error\",\n      message: \"booking object not found\"\n    }\n  }];\n}\n\n// merge both into single state object\nconst merged = {\n  ...bookingObj.json,\n  ...actionObj?.json,\n\n  // safety normalization\n  action: actionObj?.json?.action || null,\n\n  // keep trace consistency\n  traceKey: `${bookingObj.json.booking_id}-${actionObj?.json?.action || bookingObj.json.last_action || 'unknown'}`,\n\n  // ensure Supabase-friendly status mapping\n  current_status: bookingObj.json.status || bookingObj.json.current_status || null,\n\n  // CRITICAL: pass tracking_locked through so \"If\" node can check it\n  tracking_locked: bookingObj.json.tracking_locked === true || bookingObj.json.tracking_locked === \"true\"\n};\n\nreturn [{ json: merged }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2032,
+        1520
+      ],
+      "id": "2e3a402b-0fe2-43b5-901f-87b8fbe305d7",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "jsCode": "// WF5 — FEEDBACK GUARD\n// Reads tracking_locked from the Supabase-fetched booking row\n// (available via Trace Guard which already ran).\n// If already tracked, block immediately with clear frontend signal.\n\nconst data = $('WF5 — Router').first().json;\n\n// The Supabase-fetched booking data is in Trace Guard output\n// which was merged into the current context via Merge + Code in JavaScript.\n// By the time we reach here, $json has the merged data including tracking_locked.\nconst mergedData = $input.first().json;\n\nconst tracking_locked = mergedData.tracking_locked === true\n  || mergedData.tracking_locked === \"true\"\n  || mergedData.current_status === \"feedback_done\";\n\nif (tracking_locked) {\n  return [{\n    json: {\n      status: \"tracking_locked\",\n      tracking_locked: true,\n      message: \"Feedback already submitted for this booking. Tracking is complete.\",\n      booking_id: data.booking_id,\n      show_feedback_button: false,\n      show_track_button: false\n    }\n  }];\n}\n\n// Pass through for Feedback Processor\nreturn [{\n  json: {\n    ...data,\n    tracking_locked: false\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3120,
+        2016
+      ],
+      "id": "b239925d-3d55-485f-bb81-e851ca67be07",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "79264b96-6e2f-4310-95f9-8e8e4d095860",
+              "name": "message",
+              "value": "={{ $json.message }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2208,
+        1888
+      ],
+      "id": "e89024ba-5f7f-40ec-a75e-36b93d5a9663",
+      "name": "Edit Fields1"
+    }
+  ],
+  "pinData": {
+    "WF5 — HTTP Trigger": [
+      {
+        "json": {
+          "headers": {
+            "host": "n8ndigitalstudio.duckdns.org",
+            "x-real-ip": "34.34.244.102",
+            "x-forwarded-for": "34.34.244.102",
+            "x-forwarded-proto": "https",
+            "connection": "upgrade",
+            "content-length": "527",
+            "accept": "application/json",
+            "content-type": "application/json",
+            "user-agent": "axios/1.16.1",
+            "accept-encoding": "gzip, compress, deflate, br"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "action": "feedback",
+            "booking_id": "BK-2026-1779302954245-865",
+            "provider_id": "ChIJ8cK6TwAJGTkR0KPYWC9QUrk",
+            "provider_name": "AC Technology and repairng center DHA",
+            "service_type": "AC repair",
+            "location": "DHA Lahore",
+            "price_pkr": 900,
+            "user_email": "feiruun8@gmail.com",
+            "rating": 1,
+            "review": "provider was not good.he was rude and didnot listen ",
+            "transcript_included": false,
+            "transcript_text": "",
+            "images_attached": 0,
+            "image_base64_array": [],
+            "image_count": 0,
+            "message": "",
+            "timestamp": "2026-05-20T18:55:18.410Z",
+            "agent_id": "khidmatgaar_v1"
+          },
+          "webhookUrl": "https://n8ndigitalstudio.duckdns.org/webhook/khadmat-quality",
+          "executionMode": "production"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "WF5 — HTTP Trigger": {
+      "main": [
+        [
+          {
+            "node": "WF5 — Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF5 — Router": {
+      "main": [
+        [
+          {
+            "node": "Supabase — Status: en_route1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is En Route?": {
+      "main": [
+        [
+          {
+            "node": "En Route Update",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Arrived?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "En Route Update": {
+      "main": [
+        [
+          {
+            "node": "Supabase — Status: en_route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase — Status: en_route": {
+      "main": [
+        [
+          {
+            "node": "Respond — En Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Arrived?": {
+      "main": [
+        [
+          {
+            "node": "Arrived — Build Checklist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Completed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Arrived — Build Checklist": {
+      "main": [
+        [
+          {
+            "node": "Supabase — Status: in_progress",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond — Arrived",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Completed?": {
+      "main": [
+        [
+          {
+            "node": "Service Completed — Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Service Completed — Summary": {
+      "main": [
+        [
+          {
+            "node": "Supabase — Status: completed",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond — Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Feedback Processor": {
+      "main": [
+        [
+          {
+            "node": "Supabase — Save Feedback",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Escalate to WF6?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escalate to WF6?": {
+      "main": [
+        [
+          {
+            "node": "Call WF6 — Dispute Handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond — Feedback Saved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call WF6 — Dispute Handler": {
+      "main": [
+        [
+          {
+            "node": "Respond — Escalated to WF6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond — En Route": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond — Arrived": {
+      "main": [
+        [
+          {
+            "node": "Send a message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond — Completed": {
+      "main": [
+        [
+          {
+            "node": "Send a message2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond — Feedback Saved": {
+      "main": [
+        [
+          {
+            "node": "Send a message3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trace Guard": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Supabase — Status: en_route1": {
+      "main": [
+        [
+          {
+            "node": "Trace Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Is En Route?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Feedback Processor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "170b0511-826e-4106-b4ff-2b720835b177",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4849cacf29ece9bf383abb54fb2646c4bb8efa5b8d10cc48771c12ba3d91b0b0"
+  },
+  "id": "kqhk5FGyPUpuZ8rO",
+  "tags": [
+    {
+      "updatedAt": "2026-05-15T20:17:04.638Z",
+      "createdAt": "2026-05-15T20:17:04.638Z",
+      "id": "7TIUqObclsfafZNc",
+      "name": "Hackathon"
+    },
+    {
+      "updatedAt": "2026-05-15T20:17:04.629Z",
+      "createdAt": "2026-05-15T20:17:04.629Z",
+      "id": "TQ0mNmjGv8rqs8UG",
+      "name": "Khadmat AI"
+    }
+  ]
+}

@@ -1,0 +1,1049 @@
+{
+  "name": "Khadmat AI —Provider + User Cancellation & Auto-Reschedule",
+  "nodes": [
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "51910812-9500-4e40-8b74-b9ff473cf321",
+      "name": "Respond — No Alternative",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        5280,
+        2672
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/waitlist",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"booking_id\": \"{{ $json.original_booking_id }}\",\n  \"user_email\": \"{{ $json.user_email || '' }}\",\n  \"service_type\": \"{{ $json.service_type }}\",\n  \"location\": \"{{ $json.location }}\",\n  \"booking_date\": \"{{ $json.booking_date }}\",\n  \"slot\": \"{{ $('WF7 — Intake & Validator').first().json.slot }}\",\n  \"price_pkr\": {{ $('WF7 — Intake & Validator').first().json.price_pkr || 0 }},\n  \"cancelled_provider_id\": \"{{ $('WF7 — Intake & Validator').first().json.provider_id }}\",\n  \"cancelled_provider_name\": \"{{ $json.cancelled_provider }}\",\n  \"attempted_provider_name\": null,\n  \"reason\": \"no_alternative_available\",\n  \"status\": \"waiting\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        5040,
+        2672
+      ],
+      "id": "4bcc8fe5-d88a-404f-a285-2005adbcb244",
+      "name": "Supabase — Add to Waitlist (No Alternative)",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF7 — NO ALTERNATIVE FALLBACK\n// Zero alternatives in the list at all.\n// ============================================================\nconst data = $('Alternative Picker').first().json;\nconst now = new Date();\n\nreturn [{ json: {\n  status: 'no_alternative_available',\n  workflow: 'WF7-NoAlternativeFallback',\n  original_booking_id: data.booking_id,\n  cancelled_provider: data.provider_name,\n  service_type: data.service_type,\n  location: data.location,\n  booking_date: data.booking_date,\n  user_email: data.user_email || '',\n  user_name: data.user_name || 'Valued Customer',\n  resolution: {\n    refund: { eligible: true, amount_pkr: data.price_pkr, note: 'Full refund approved' },\n    human_escalation: { required: true, ticket_id: `TKT-WF7-${Date.now()}`, reason: 'Zero alternatives after cancellation' },\n    waitlist: { added: true, message: 'Added to waitlist. Will notify when provider available.' }\n  },\n  compensation: data.compensation,\n  timestamp: now.toISOString(),\n\n  // ── UI BUTTON CONTROL ─────────────────────────────────────────\n  show_track_button: false,\n  show_feedback_button: false,\n  ui_actions: {\n    show_track_button: false,\n    show_cancel_button: false,\n    show_report_button: false,\n    show_feedback_button: false,\n    primary_label: 'Cancelled — Refund Pending',\n    secondary_label: null,\n    reason: 'no_alternative_available_refund_issued'\n  }\n}}];"
+      },
+      "id": "4a231101-a675-4162-a3f3-2905c10a0c77",
+      "name": "No Alternative Fallback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4800,
+        2672
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "efd3d11f-4034-45ad-88f6-030f35f1610a",
+      "name": "Respond — No Slot Available",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        6240,
+        2592
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.user_email }}",
+        "subject": "=GharFix — We're Finding You a Provider",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\">\n</head>\n<body style=\"font-family: Arial, sans-serif; font-size: 15px; color: #333333; line-height: 1.6; padding: 20px;\">\n  <div style=\"max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;\">\n\n    <h2 style=\"color: #2c5aa0;\">Added to Waitlist</h2>\n\n    <p>Dear {{ $json.user_name || 'Valued Customer' }},</p>\n\n    <p>Your original provider cancelled but unfortunately we could not find an available slot with an alternative provider for <strong>{{ $json.booking_date }}</strong>.</p>\n\n    <hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\">\n\n    <h3 style=\"color: #2c5aa0;\">Booking Details:</h3>\n\n    <table style=\"width: 100%;\">\n      <tr>\n        <td style=\"padding: 4px 12px 4px 0;\"><strong>Booking ID:</strong></td>\n        <td style=\"padding: 4px 0;\">{{ $json.original_booking_id }}</td>\n      </tr>\n      <tr>\n        <td style=\"padding: 4px 12px 4px 0;\"><strong>Service:</strong></td>\n        <td style=\"padding: 4px 0;\">{{ $json.service_type }}</td>\n      </tr>\n      <tr>\n        <td style=\"padding: 4px 12px 4px 0;\"><strong>Location:</strong></td>\n        <td style=\"padding: 4px 0;\">{{ $json.location }}</td>\n      </tr>\n    </table>\n\n    <hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\">\n\n    <p>You have been added to our waitlist and we will notify you as soon as a slot opens up.</p>\n\n    <p style=\"margin-top: 30px;\">\n      Sincerely,<br>\n      <strong>The GharFix Team</strong>\n    </p>\n\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        6000,
+        2592
+      ],
+      "id": "a7aff183-1170-4665-92b7-5ebf34de6456",
+      "name": "Email — No Slot Notification",
+      "webhookId": "2933ccf8-2312-4c62-9115-c11529bb4603",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "nTOYRDSTzQdF6yEt",
+          "name": "gharfix end email"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/waitlist",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"booking_id\": \"{{ $json.original_booking_id }}\",\n  \"user_email\": \"{{ $json.user_email || '' }}\",\n  \"service_type\": \"{{ $json.service_type }}\",\n  \"location\": \"{{ $json.location }}\",\n  \"booking_date\": \"{{ $json.booking_date }}\",\n  \"slot\": \"{{ $('WF7 — Intake & Validator').first().json.slot }}\",\n  \"price_pkr\": {{ $('WF7 — Intake & Validator').first().json.price_pkr || 0 }},\n  \"cancelled_provider_id\": \"{{ $('WF7 — Intake & Validator').first().json.provider_id }}\",\n  \"cancelled_provider_name\": \"{{ $json.cancelled_provider }}\",\n  \"attempted_provider_name\": \"{{ $json.attempted_provider || '' }}\",\n  \"reason\": \"no_slot_available\",\n  \"status\": \"waiting\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        5760,
+        2592
+      ],
+      "id": "73e1e2fe-71a7-4469-bcbf-5e111589abfc",
+      "name": "Supabase — Add to Waitlist (No Slot)",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF7 — NO SLOT FALLBACK\n// New provider found but no slot available on that date.\n// ============================================================\nconst data = $('Slot Selector').first().json;\nconst now = new Date();\n\nconst nextDays = [1, 2, 3].map(offset => {\n  const d = new Date();\n  d.setDate(d.getDate() + offset);\n  const dateStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');\n  const label = offset === 1 ? 'Tomorrow' : offset === 2 ? 'Day after tomorrow' : '3 days from now';\n  return { date: dateStr, label, suggested_slots: ['09:00', '11:00', '14:00'] };\n});\n\nreturn [{ json: {\n  status: 'no_slot_available',\n  workflow: 'WF7-NoSlotFallback',\n  original_booking_id: data.booking_id,\n  cancelled_provider: data.provider_name,\n  attempted_provider: data.next_best_provider?.name,\n  service_type: data.service_type,\n  location: data.location,\n  booking_date: data.booking_date,\n  alternate_dates: nextDays,\n  compensation: data.compensation,\n  user_email: data.user_email || '',\n  user_name: data.user_name || 'Valued Customer',\n  timestamp: now.toISOString(),\n\n  // ── UI BUTTON CONTROL ─────────────────────────────────────────\n  show_track_button: false,\n  show_feedback_button: false,\n  ui_actions: {\n    show_track_button: false,\n    show_cancel_button: false,\n    show_report_button: false,\n    show_feedback_button: false,\n    primary_label: 'Pending Reschedule',\n    secondary_label: null,\n    reason: 'no_slot_available_awaiting_user_selection'\n  }\n}}];"
+      },
+      "id": "6043b449-411c-4424-a2b2-b8914e06441f",
+      "name": "No Slot Fallback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5520,
+        2592
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "09f18fa1-cc1b-46ed-8a78-849fc6b1b9fb",
+      "name": "Respond — Rescheduled Successfully",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        6240,
+        2384
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.user_email }}",
+        "subject": "=Important Update: Your GharFix Booking ({{ $json.new_booking.booking_id }})",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\">\n</head>\n<body style=\"font-family: Arial, sans-serif; font-size: 15px; color: #333333; line-height: 1.6; padding: 20px;\">\n  <div style=\"max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;\">\n\n    <h2 style=\"color: #2c5aa0;\">Booking Update</h2>\n\n    <p>Dear {{ $json.user_name || 'Valued Customer' }},</p>\n\n    <p>{{ $json.customer_message }}</p>\n\n    <hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\">\n\n    <h3 style=\"color: #2c5aa0;\">Original Booking:</h3>\n\n    <table style=\"width: 100%;\">\n      <tr>\n        <td style=\"padding: 4px 12px 4px 0;\"><strong>Booking ID:</strong></td>\n        <td style=\"padding: 4px 0;\">{{ $json.original_booking.booking_id }}</td>\n      </tr>\n      <tr>\n        <td style=\"padding: 4px 12px 4px 0;\"><strong>Provider:</strong></td>\n        <td style=\"padding: 4px 0;\">{{ $json.original_booking.provider }}</td>\n      </tr>\n    </table>\n\n    <hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\">\n\n    <h3 style=\"color: #2c5aa0;\">New Booking:</h3>\n\n    <table style=\"width: 100%;\">\n      <tr>\n        <td style=\"padding: 4px 12px 4px 0;\"><strong>New Booking ID:</strong></td>\n        <td style=\"padding: 4px 0;\">{{ $json.new_booking.booking_id }}</td>\n      </tr>\n      <tr>\n        <td style=\"padding: 4px 12px 4px 0;\"><strong>New Provider:</strong></td>\n        <td style=\"padding: 4px 0;\">{{ $json.new_booking.provider }}</td>\n      </tr>\n      <tr>\n        <td style=\"padding: 4px 12px 4px 0;\"><strong>Date &amp; Time:</strong></td>\n        <td style=\"padding: 4px 0;\">{{ $json.new_booking.date }} at {{ $json.new_booking.slot_label }}</td>\n      </tr>\n      <tr>\n        <td style=\"padding: 4px 12px 4px 0;\"><strong>Location:</strong></td>\n        <td style=\"padding: 4px 0;\">{{ $json.new_booking.location }}</td>\n      </tr>\n    </table>\n\n    <hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\">\n\n    {{ $json.compensation.eligible ? '<p><strong>Compensation:</strong> PKR ' + $json.compensation.amount_pkr + ' credit has been added to your account.</p>' : '' }}\n\n    <p style=\"margin-top: 30px;\">\n      Sincerely,<br>\n      <strong>The GharFix Team</strong>\n    </p>\n\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        6000,
+        2464
+      ],
+      "id": "07e32341-2e7a-49e4-8aa7-9d64a3b9507b",
+      "name": "Email — Reschedule Notification",
+      "webhookId": "2933ccf8-2312-4c62-9115-c11529bb4603",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "nTOYRDSTzQdF6yEt",
+          "name": "gharfix end email"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings?booking_id=eq.{{ $json.original_booking.booking_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"rescheduled\",\n  \"booking_visibility\": \"archived\",\n\n  \"tracking_status\": \"closed\",\n  \"tracked_once\": true,\n  \"tracking_locked\": true,\n\n  \"provider_action_locked\": true,\n\n  \"reassigned_to_provider_id\": \"{{ $json.new_booking.provider_id }}\",\n  \"reassigned_from_provider_id\": \"{{ $json.original_booking.provider_id }}\",\n\n  \"rescheduled_to_booking_id\": \"{{ $json.new_booking.booking_id }}\",\n\n  \"new_provider_name\": \"{{ $json.new_booking.provider }}\",\n  \"new_provider_id\": \"{{ $json.new_booking.provider_id }}\",\n\n  \"new_slot\": \"{{ $json.new_booking.slot }}\",\n\n  \"flagged_for_review\": {{ $json.initiator === 'provider' }},\n\n  \"updated_at\": \"{{ new Date().toISOString() }}\"\n}",
+        "options": {}
+      },
+      "id": "d5c79486-7e3f-44be-bd9d-91d7892548be",
+      "name": "Supabase — Update Original Booking (rescheduled)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        6000,
+        2304
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF7 — RESCHEDULE RECORD BUILDER\n// Works for both provider cancel and user reschedule.\n// ============================================================\n\nconst confirmData = $input.first().json;\nconst pickerData = $('Alternative Picker').first().json;\nconst intakeData = $('WF7 — Intake & Validator').first().json;\n\nconst newBookingId =\n  confirmData.booking_id ||\n  confirmData.receipt?.booking_id ||\n  'N/A';\n\nconst newProvider = pickerData.next_best_provider;\n\nfunction formatSlotLabel(time) {\n  if (!time) return time;\n\n  if (time.includes('AM') || time.includes('PM')) {\n    return time;\n  }\n\n  const [h, m] = time.split(':').map(Number);\n\n  const period = h >= 12 ? 'PM' : 'AM';\n  const hour = h > 12 ? h - 12 : h === 0 ? 12 : h;\n\n  return `${hour}:${String(m).padStart(2, '0')} ${period}`;\n}\n\n// ============================================================\n// SLOT NORMALIZATION\n// Handles:\n// 1. selected_slot.time\n// 2. selected_slot.label\n// 3. WF4 appointment.time\n// 4. WF4 appointment.time_label\n// ============================================================\n\nconst selectedSlot = pickerData.selected_slot || {};\nconst appointment = confirmData.appointment || {};\n\nconst newSlotTime =\n  selectedSlot.time ||\n  selectedSlot.label ||\n  appointment.time ||\n  '';\n\nconst newSlotLabel =\n  appointment.time_label ||\n  formatSlotLabel(newSlotTime);\n\nconsole.log('=== WF7 Reschedule Record ===');\nconsole.log('Initiator:', intakeData.initiator);\nconsole.log('New Booking:', newBookingId);\nconsole.log('Slot Time:', newSlotTime);\nconsole.log('Slot Label:', newSlotLabel);\n\nreturn [{\n  json: {\n    status: 'rescheduled',\n    workflow: 'WF7-AutoReschedule',\n    initiator: intakeData.initiator,\n\n    original_booking: {\n      booking_id: intakeData.booking_id,\n      provider: intakeData.provider_name,\n      provider_id: intakeData.provider_id,\n      slot: intakeData.slot,\n      date: intakeData.booking_date\n    },\n\n    // provider_id stays unchanged in Supabase (original provider keeps booking in their list).\n    // provider_action_locked=true + status=rescheduled tells frontend to show\n    // [Cancelled / Feedback] buttons instead of [Track / Report / Cancel].\n    provider_action_locked: true,\n    tracking_locked: true,\n\n    new_booking: {\n      booking_id: newBookingId,\n\n      provider:\n        newProvider?.name ||\n        confirmData.provider?.name ||\n        '',\n\n      provider_id:\n        newProvider?.id ||\n        newProvider?.place_id ||\n        confirmData.provider?.id ||\n        '',\n\n      provider_score: newProvider?.computed_score,\n      provider_rating: newProvider?.rating,\n\n      slot: newSlotTime,\n      slot_label: newSlotLabel,\n\n      date: intakeData.booking_date,\n      location: intakeData.location,\n      price_pkr: intakeData.price_pkr,\n\n      kept_original_time: pickerData.kept_original_time\n    },\n\n    // ── UI BUTTON CONTROL (matches WF5 pattern) ──────────────────\n    // Frontend reads these fields to render the correct buttons per booking.\n    // rescheduled + provider_action_locked → [Booking Reassigned] [Leave Feedback]\n    show_track_button: false,\n    show_feedback_button: true,\n    ui_actions: {\n      show_track_button: false,\n      show_cancel_button: false,\n      show_report_button: false,\n      show_feedback_button: true,\n      primary_label: 'Booking Reassigned',\n      secondary_label: 'Leave Feedback',\n      reason: 'booking_rescheduled_to_new_provider'\n    },\n\n        user_email: intakeData.user_email || '',\n    user_name: intakeData.user_name || 'Valued Customer',\n\n    compensation: pickerData.compensation,\n    penalty_record: pickerData.penalty_record || null,\n\n    customer_message:\n      `Your booking with ${intakeData.provider_name} was cancelled. ` +\n      `We have automatically reassigned your booking to ${newProvider?.name || 'a new provider'}.`,\n\n    simulated_whatsapp:\n      `⚠️ Provider Update — Khadmat AI\\n\\n` +\n      `Previous Provider: ${intakeData.provider_name}\\n` +\n      `New Provider: ${newProvider?.name || 'N/A'}\\n\\n` +\n      `🎫 New Booking ID: ${newBookingId}\\n` +\n      `📅 ${intakeData.booking_date} at ${newSlotLabel}\\n` +\n      `📍 ${intakeData.location}\\n` +\n      `💰 PKR ${intakeData.price_pkr}` +\n      (\n        pickerData.compensation?.eligible\n          ? `\\n🎁 Compensation: PKR ${pickerData.compensation.amount_pkr}`\n          : ''\n      ),\n\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "191f41b2-2536-4202-a67e-092b91f8926d",
+      "name": "Build Reschedule Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5760,
+        2384
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ghack.app.n8n.cloud/webhook/khadmat-booking",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": \"confirm\",\n  \"provider_id\": \"{{ $json.next_best_provider.id || $json.next_best_provider.place_id }}\",\n  \"place_id\": \"{{ $json.next_best_provider.place_id || $json.next_best_provider.id }}\",\n  \"provider_name\": \"{{ $json.next_best_provider.name }}\",\n  \"service_type\": \"{{ $json.service_type }}\",\n  \"location\": \"{{ $json.location }}\",\n  \"booking_date\": \"{{ $json.booking_date }}\",\n  \"slot\": \"{{ $json.selected_slot.time || $json.selected_slot.label }}\",\n  \"price_pkr\": {{ $json.price_pkr }},\n  \"user_name\": \"{{ $json.user_name }}\",\n  \"user_email\": \"{{ $json.user_email || '' }}\",\n  \"availability_slots\": {{ JSON.stringify($json.next_best_provider.availability_slots || ['09:00','10:00','11:00','14:00','15:00','16:00']) }}\n}",
+        "options": {}
+      },
+      "id": "7b6313bb-c45e-4723-a9c5-b8ef4b91247c",
+      "name": "Call WF4 — Confirm New Booking",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5520,
+        2384
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "slot-success-check",
+              "leftValue": "={{ $json.slot_selection.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c665aa24-a239-4885-9867-5ee5f084a2ec",
+      "name": "Slot Available?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        5280,
+        2464
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF7 — SLOT SELECTOR\n// Tries to keep the original time slot, falls back to first free.\n// ============================================================\nconst wf4Response = $input.first().json;\nconst originalData = $('Alternative Picker').first().json;\n\nconst allSlots = wf4Response.slots || [];\nconst freeSlots = allSlots.filter(s => s.available);\n\nif (freeSlots.length === 0) {\n  return [{ json: {\n    ...originalData,\n    slot_selection: { success: false, reason: 'No available slots on original date for new provider' },\n    wf4_slots_data: wf4Response\n  }}];\n}\n\nconst originalSlot = originalData.slot;\n\n// Normalize helper for comparison\nconst normalize = (str = '') => str.toLowerCase().replace(/\\s/g, '').trim();\n\nconst matchingOriginal = freeSlots.find(s =>\n  normalize(s.label || s.time) === normalize(originalSlot) && s.available\n);\n\nconst selectedSlot = matchingOriginal || freeSlots[0];\n\nconsole.log('=== WF7 Slot Selector ===');\nconsole.log('Original Slot:', originalSlot, '| Matched:', !!matchingOriginal, '| Selected:', selectedSlot?.time || selectedSlot?.label);\n\nreturn [{ json: {\n  ...originalData,\n  selected_slot: selectedSlot,\n  kept_original_time: !!matchingOriginal,\n  free_slots_available: freeSlots.length,\n  slot_selection: { success: true },\n  wf4_slots_data: wf4Response\n}}];"
+      },
+      "id": "da663f9d-e2b5-4b8f-8a74-0256f3983a78",
+      "name": "Slot Selector",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5040,
+        2464
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ghack.app.n8n.cloud/webhook/khadmat-booking",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": \"get_slots\",\n  \"provider_id\": \"{{ $json.next_best_provider.id || $json.next_best_provider.place_id }}\",\n  \"place_id\": \"{{ $json.next_best_provider.place_id || $json.next_best_provider.id }}\",\n  \"provider_name\": \"{{ $json.next_best_provider.name }}\",\n  \"service_type\": \"{{ $json.service_type }}\",\n  \"location\": \"{{ $json.location }}\",\n  \"booking_date\": \"{{ $json.booking_date }}\",\n  \"price_pkr\": {{ $json.price_pkr }},\n  \"availability_slots\": {{ JSON.stringify($json.next_best_provider.availability_slots || ['09:00','10:00','11:00','14:00','15:00','16:00']) }}\n}",
+        "options": {}
+      },
+      "id": "a659191d-f1ef-4382-a34a-845ae0cc7f20",
+      "name": "Call WF4 — Get Slots for New Provider",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4800,
+        2464
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "has-alt-check",
+              "leftValue": "={{ $json.has_alternative }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "872fa193-971b-40bd-9280-54bc5a739b1f",
+      "name": "Alternative Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4560,
+        2544
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF7 — ALTERNATIVE PICKER\n// Shared by both provider cancel and user reschedule paths.\n// Picks the highest-scored alternative provider.\n// ============================================================\nconst data = $input.first().json;\nconst now = new Date();\n\nconst alternatives = data.alternatives || [];\nconst sorted = [...alternatives].sort((a, b) =>\n  (b.computed_score || b.score || 0) - (a.computed_score || a.score || 0)\n);\n\nconst nextBest = sorted.length > 0 ? sorted[0] : null;\nconst remaining = sorted.slice(1);\n\nlet compensation = { eligible: false, amount_pkr: 0, reason: '' };\nif (data.is_urgent) {\n  compensation = { eligible: true, amount_pkr: 250, reason: 'Urgent cancellation — PKR 250 credit on next booking.' };\n} else if (data.hours_until_booking < 12) {\n  compensation = { eligible: true, amount_pkr: 100, reason: 'Same-day cancellation. PKR 100 discount credit added.' };\n}\n\nconsole.log('=== WF7 Alternative Picker ===');\nconsole.log('Initiator:', data.initiator, '| Next best:', nextBest?.name || 'None');\n\nreturn [{ json: {\n  ...data,\n  next_best_provider: nextBest,\n  remaining_alternatives: remaining,\n  has_alternative: !!nextBest,\n  compensation,\n  picker_timestamp: now.toISOString()\n}}];"
+      },
+      "id": "3481bb48-c39c-40b9-8738-90a408ce14c5",
+      "name": "Alternative Picker",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4064,
+        2528
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings?booking_id=eq.{{ $json.booking_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"user_rescheduling\",\n  \"flagged_for_review\": false,\n  \"cancellation_reason\": \"User initiated reschedule\",\n  \"updated_at\": \"{{ new Date().toISOString() }}\"\n}",
+        "options": {}
+      },
+      "id": "c2faba4b-949a-41a9-86ac-f981f6672a85",
+      "name": "Supabase — Mark Booking User Reschedule",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3920,
+        2992
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings?booking_id=eq.{{ $json.booking_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"provider_cancelled\",\n  \"flagged_for_review\": true,\n  \"cancellation_reason\": \"{{ $json.cancellation_reason_by_provider || $json.cancellation_reason || 'Provider initiated cancellation' }}\",\n  \"provider_action_locked\": true,\n  \"tracking_locked\": true,\n  \"updated_at\": \"{{ new Date().toISOString() }}\"\n}",
+        "options": {}
+      },
+      "id": "0d49a87b-592a-4e10-9d43-26443af33dd1",
+      "name": "Supabase — Mark Booking Provider Cancelled",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4080,
+        2288
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF7 — PENALTY ENGINE\n// Only runs for provider cancellations.\n// Applies a strike to the cancelling provider.\n// ============================================================\nconst data = $('WF7 — Intake & Validator').first().json;\nconst now = new Date();\n\nconst existingCancellationRate = parseFloat(data.provider_cancellation_rate) || 0.08;\nconst isRepeatOffender = existingCancellationRate > 0.20;\n\nconst updatedCancellationRate = Math.min(1.0, parseFloat((existingCancellationRate + 0.05).toFixed(2)));\nconst blacklisted = updatedCancellationRate > 0.30 || isRepeatOffender;\n\nconst penaltyRecord = {\n  provider_id: data.provider_id,\n  provider_name: data.provider_name,\n  previous_cancellation_rate: existingCancellationRate,\n  updated_cancellation_rate: updatedCancellationRate,\n  blacklisted,\n  penalty_level: blacklisted ? 'SUSPENDED' : updatedCancellationRate > 0.15 ? 'WARNING_LEVEL_2' : 'WARNING_LEVEL_1',\n  penalty_note: blacklisted\n    ? `${data.provider_name} SUSPENDED — cancellation rate exceeded 30%.`\n    : `Strike added. Rate: ${(updatedCancellationRate * 100).toFixed(0)}%.`,\n  matching_score_delta: blacklisted ? -100 : -20,\n  logged_at: now.toISOString()\n};\n\nconsole.log('=== WF7 Penalty Engine ===');\nconsole.log('Provider:', data.provider_name, '| Rate:', existingCancellationRate, '->', updatedCancellationRate);\n\nreturn [{ json: { ...data, penalty_record: penaltyRecord } }];"
+      },
+      "id": "fbc112c5-f312-4fc3-b0cc-904b843545e7",
+      "name": "Penalty Engine",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3840,
+        2464
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "provider-cancel-check",
+              "leftValue": "={{ $json.initiator }}",
+              "rightValue": "provider",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c6957640-a06a-449c-9f2b-934198a406f7",
+      "name": "Is Provider Cancel?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3616,
+        2512
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "f38bbb4c-5539-4ddf-80b3-d67f7c91b7e4",
+      "name": "Respond — Cancelled Only",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        4960,
+        2064
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.user_email }}",
+        "subject": "=Your GharFix Booking Cancelled ({{ $json.booking_id }})",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\">\n</head>\n<body style=\"font-family: Arial, sans-serif; font-size: 15px; color: #333333; line-height: 1.6; padding: 20px;\">\n  <div style=\"max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;\">\n\n    <h2 style=\"color: #2c5aa0;\">Booking Cancelled</h2>\n\n    <p>Dear {{ $json.user_name || 'Valued Customer' }},</p>\n\n    <p>Your booking has been cancelled as requested.</p>\n\n    <hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\">\n\n    <h3 style=\"color: #2c5aa0;\">Booking Details:</h3>\n\n    <table style=\"width: 100%;\">\n      <tr>\n        <td style=\"padding: 4px 12px 4px 0;\"><strong>Booking ID:</strong></td>\n        <td style=\"padding: 4px 0;\">{{ $json.booking_id }}</td>\n      </tr>\n    </table>\n\n    <hr style=\"border: none; border-top: 1px solid #eee; margin: 20px 0;\">\n\n    <p>If this was a mistake, please book again through the app.</p>\n\n    <p style=\"margin-top: 30px;\">\n      Sincerely,<br>\n      <strong>The GharFix Team</strong>\n    </p>\n\n  </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        4720,
+        2064
+      ],
+      "id": "02500924-1024-41d5-a5ce-7b98ed17c22e",
+      "name": "Email — User Cancel Confirmation",
+      "webhookId": "2933ccf8-2312-4c62-9115-c11529bb4603",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "nTOYRDSTzQdF6yEt",
+          "name": "gharfix end email"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $('Cancel Only Handler').first().json;\nreturn [{ json: {\n  status: 'cancelled',\n  workflow: 'WF7-CancelOnly',\n  booking_id: data.booking_id,\n  provider_name: data.provider_name,\n  service_type: data.service_type,\n  cancelled_at: data.cancelled_at,\n  user_email: data.user_email || '',\n  user_name: data.user_name || 'Valued Customer',\n  message: 'Your booking has been cancelled successfully.',\n  customer_message: 'Booking cancelled. No replacement has been made.',\n\n  // ── UI BUTTON CONTROL (matches WF5 pattern) ──────────────────\n  show_track_button: false,\n  show_feedback_button: true,\n  ui_actions: {\n    show_track_button: false,\n    show_cancel_button: false,\n    show_report_button: false,\n    show_feedback_button: true,\n    primary_label: 'Cancelled',\n    secondary_label: 'Leave Feedback',\n    reason: 'booking_cancelled_by_user'\n  }\n}}];"
+      },
+      "id": "eb0dce8d-beba-414b-ae1f-ddd7f1223f3f",
+      "name": "Build Cancel Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4480,
+        2064
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings?booking_id=eq.{{ $json.booking_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"cancelled\",\n  \"flagged_for_review\": false,\n  \"cancellation_reason\": \"Customer initiated cancellation — cancel only\",\n  \"updated_at\": \"{{ new Date().toISOString() }}\"\n}",
+        "options": {}
+      },
+      "id": "720ebe1c-1194-4246-b757-460b47c814cf",
+      "name": "Supabase — Mark Cancelled (User Cancel Only)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4240,
+        2064
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// WF7 — USER CANCEL ONLY HANDLER\nconst data = $input.first().json;\nconst now = new Date();\nconsole.log('=== WF7 User Cancel Only ===');\nconsole.log('Booking:', data.booking_id, '| Provider:', data.provider_name);\nreturn [{ json: {\n  ...data,\n  cancel_only_mode: true,\n  cancelled_at: now.toISOString()\n}}];"
+      },
+      "id": "b149067e-2db2-455a-816e-f7d87799d51a",
+      "name": "Cancel Only Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4000,
+        2064
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cancel-only-check",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "cancel_only",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "initiator-user-check",
+              "leftValue": "={{ $json.initiator }}",
+              "rightValue": "user",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b4b007fd-fdc0-46a4-8023-e7dd851641c8",
+      "name": "Cancel Only? (User)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3600,
+        2304
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "063c35a8-1cae-48b1-be72-3f239fa4f7e8",
+      "name": "Respond — Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3600,
+        2112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "validation-check",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "validation_error",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "187b8c28-e4a8-4a50-ae7f-acde0ab18eaf",
+      "name": "Validation Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        2304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF7 — INTAKE & VALIDATOR (FINAL MERGED)\n// Handles: user cancel_only | user reschedule | provider_cancel\n// ============================================================\n\nconst body = $input.first().json.body || $input.first().json;\n\nconst required = [\n  'booking_id',\n  'provider_id',\n  'provider_name',\n  'service_type',\n  'location',\n  'booking_date',\n  'slot',\n  'price_pkr'\n];\n\nconst missing = required.filter(f => !body[f]);\n\nif (missing.length > 0) {\n  return [{\n    json: {\n      status: 'validation_error',\n      message: `Missing required fields: ${missing.join(', ')}`,\n      received: body,\n      workflow: 'WF7-Intake'\n    }\n  }];\n}\n\n// ============================================================\n// Convert 12h slot -> 24h (safe — handles both formats)\n// ============================================================\nfunction convertTo24Hour(timeStr) {\n  if (!timeStr) return '09:00:00';\n  // Already 24h format like '09:00' or '09:00:00'\n  if (!timeStr.includes('AM') && !timeStr.includes('PM')) {\n    const parts = timeStr.split(':');\n    return `${String(parseInt(parts[0])).padStart(2,'0')}:${parts[1] || '00'}:00`;\n  }\n  const [time, modifier] = timeStr.trim().split(' ');\n  let [hours, minutes] = time.split(':');\n  hours = parseInt(hours, 10);\n  if (modifier === 'PM' && hours !== 12) hours += 12;\n  if (modifier === 'AM' && hours === 12) hours = 0;\n  return `${String(hours).padStart(2, '0')}:${minutes || '00'}:00`;\n}\n\nconst slot24 = convertTo24Hour(body.slot);\nconst bookingDateTime = new Date(`${body.booking_date}T${slot24}`);\nconst now = new Date();\nconst hoursUntilBooking = parseFloat(((bookingDateTime - now) / 3600000).toFixed(1));\nconst isUrgent = hoursUntilBooking < 3;\nconst isPast = hoursUntilBooking < 0;\n\n// Normalise action and initiator\nconst action = body.action || 'reschedule';\nconst initiator = body.initiator || 'user';\n\nconsole.log('=== WF7 Intake ===');\nconsole.log('Booking:', body.booking_id);\nconsole.log('Action:', action, '| Initiator:', initiator);\nconsole.log('Slot:', body.slot, '->', slot24);\nconsole.log('Hours Until Booking:', hoursUntilBooking);\n\nreturn [{\n  json: {\n    ...body,\n    action,\n    initiator,\n    slot24,\n    hours_until_booking: hoursUntilBooking,\n    is_urgent: isUrgent,\n    is_past: isPast,\n    alternatives: body.alternatives || [],\n    user_name: body.user_name || 'Valued Customer',\n    cancellation_reason_by_provider: body.cancellation_reason_by_provider || ''\n  }\n}];"
+      },
+      "id": "b4805aae-a17c-42a8-86b8-ac214963cf12",
+      "name": "WF7 — Intake & Validator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3120,
+        2304
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "khadmat-reschedule",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "cfdf9f39-5628-410b-952d-101ebb33634c",
+      "name": "WF7 — HTTP Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        2304
+      ],
+      "webhookId": "3b54c29e-b35f-418e-b2e4-2a95d029a668"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Supabase — Add to Waitlist (No Alternative)": {
+      "main": [
+        [
+          {
+            "node": "Respond — No Alternative",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Alternative Fallback": {
+      "main": [
+        [
+          {
+            "node": "Supabase — Add to Waitlist (No Alternative)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase — Add to Waitlist (No Slot)": {
+      "main": [
+        [
+          {
+            "node": "Respond — No Slot Available",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email — No Slot Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Slot Fallback": {
+      "main": [
+        [
+          {
+            "node": "Supabase — Add to Waitlist (No Slot)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Reschedule Record": {
+      "main": [
+        [
+          {
+            "node": "Respond — Rescheduled Successfully",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email — Reschedule Notification",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Supabase — Update Original Booking (rescheduled)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call WF4 — Confirm New Booking": {
+      "main": [
+        [
+          {
+            "node": "Build Reschedule Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slot Available?": {
+      "main": [
+        [
+          {
+            "node": "Call WF4 — Confirm New Booking",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Slot Fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slot Selector": {
+      "main": [
+        [
+          {
+            "node": "Slot Available?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call WF4 — Get Slots for New Provider": {
+      "main": [
+        [
+          {
+            "node": "Slot Selector",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alternative Found?": {
+      "main": [
+        [
+          {
+            "node": "Call WF4 — Get Slots for New Provider",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Alternative Fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alternative Picker": {
+      "main": [
+        [
+          {
+            "node": "Alternative Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Penalty Engine": {
+      "main": [
+        [
+          {
+            "node": "Alternative Picker",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Supabase — Mark Booking Provider Cancelled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Provider Cancel?": {
+      "main": [
+        [
+          {
+            "node": "Penalty Engine",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Alternative Picker",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Supabase — Mark Booking User Reschedule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Cancel Response": {
+      "main": [
+        [
+          {
+            "node": "Respond — Cancelled Only",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email — User Cancel Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase — Mark Cancelled (User Cancel Only)": {
+      "main": [
+        [
+          {
+            "node": "Build Cancel Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cancel Only Handler": {
+      "main": [
+        [
+          {
+            "node": "Supabase — Mark Cancelled (User Cancel Only)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cancel Only? (User)": {
+      "main": [
+        [
+          {
+            "node": "Cancel Only Handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Provider Cancel?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation Error?": {
+      "main": [
+        [
+          {
+            "node": "Respond — Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cancel Only? (User)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF7 — Intake & Validator": {
+      "main": [
+        [
+          {
+            "node": "Validation Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF7 — HTTP Trigger": {
+      "main": [
+        [
+          {
+            "node": "WF7 — Intake & Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "fe81fa0e-f95a-47fa-bfab-2ec566f218e1",
+  "meta": {
+    "instanceId": "4849cacf29ece9bf383abb54fb2646c4bb8efa5b8d10cc48771c12ba3d91b0b0"
+  },
+  "id": "NeZ2e1w6EWJwqdMK",
+  "tags": []
+}

@@ -1,0 +1,117 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #000666;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #1a237e;
+  --color-on-primary-container: #8690ee;
+  --color-secondary: #006b5f;
+  --color-on-secondary: #ffffff;
+  --color-secondary-container: #8df5e4;
+  --color-on-secondary-container: #007165;
+  --color-tertiary: #331000;
+  --color-on-tertiary: #ffffff;
+  --color-tertiary-container: #542000;
+  --color-on-tertiary-container: #fa6d00;
+  --color-error: #ba1a1a;
+  --color-on-error: #ffffff;
+  --color-error-container: #ffdad6;
+  --color-on-error-container: #93000a;
+  --color-background: #f8f9fa;
+  --color-on-background: #191c1d;
+  --color-surface: #f8f9fa;
+  --color-on-surface: #191c1d;
+  --color-surface-variant: #e1e3e4;
+  --color-on-surface-variant: #454652;
+  --color-outline: #767683;
+  --color-outline-variant: #c6c5d4;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f1f3f4;
+  --color-surface-container: #e9eaeb;
+  --color-surface-container-high: #e1e3e5;
+  --color-surface-container-highest: #dadbdc;
+
+  --font-sans: "Plus Jakarta Sans", sans-serif;
+  --font-heading: "Plus Jakarta Sans", sans-serif;
+  --font-urdu: "Noto Serif", serif;
+}
+
+@layer utilities {
+  .glass-card {
+    background-color: rgba(255, 255, 255, 0.7);
+    fill-opacity: 0.7;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(198, 197, 212, 0.3);
+  }
+
+  .glass-surface {
+    background-color: rgba(248, 249, 250, 0.8);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border-bottom: 1px solid rgba(198, 197, 212, 0.2);
+  }
+
+  .ai-gradient-border {
+    position: relative;
+    background: linear-gradient(var(--color-surface-container-lowest), var(--color-surface-container-lowest)) padding-box,
+                linear-gradient(135deg, var(--color-secondary), var(--color-primary-container)) border-box;
+    border: 2px solid transparent;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  /* ── RTL Support for Urdu ── */
+  [dir="rtl"] {
+    direction: rtl;
+    text-align: right;
+  }
+
+  [dir="rtl"] .flex-row-reverse-rtl {
+    flex-direction: row-reverse;
+  }
+
+  [dir="rtl"] .ml-auto-rtl {
+    margin-left: auto;
+    margin-right: 0;
+  }
+
+  [dir="rtl"] .mr-auto-rtl {
+    margin-right: auto;
+    margin-left: 0;
+  }
+
+  /* Flex direction helpers for RTL */
+  [dir="rtl"] .flex.justify-between {
+    flex-direction: row-reverse;
+  }
+
+  [dir="rtl"] .flex.items-center.gap-2 {
+    flex-direction: row-reverse;
+  }
+
+  [dir="rtl"] .flex.items-center.gap-3 {
+    flex-direction: row-reverse;
+  }
+
+  [dir="rtl"] .flex.gap-1.mt-1.mb-1 {
+    flex-direction: row-reverse;
+  }
+
+  [dir="rtl"] .flex.gap-2 {
+    flex-direction: row-reverse;
+  }
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-background);
+  color: var(--color-on-background);
+  -webkit-font-smoothing: antialiased;
+}

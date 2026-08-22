@@ -1,0 +1,1103 @@
+{
+  "name": "Khadmat AI —intent,provider and price Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "khadmat-intent",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "fbef1351-958d-4f86-b888-02f781a3a567",
+      "name": "WF1 — HTTP Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        656,
+        1120
+      ],
+      "webhookId": "6708236d-ab63-45ec-907d-85acb9862448"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "d45cf080-afc9-432e-8516-f966463241d6",
+              "leftValue": "={{ $json.results.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2224,
+        1536
+      ],
+      "id": "bfeef389-bbb8-433b-be29-ff7eb97d7e03",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "Sorry, no providers found in your area for this service",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2448,
+        1632
+      ],
+      "id": "d6cd5c38-5d0b-4195-9959-1f3ed251e800",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "bec7d13e-45bc-4404-8498-00cbdb102580",
+              "leftValue": "={{ $json.results.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1552,
+        1536
+      ],
+      "id": "5b9615ce-d8ab-4821-8266-479cc51077e6",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF2 — GEOCODE FALLBACK\n// If Google Maps Geocoding failed (no results), fall back to\n// known area coordinates for major Islamabad sectors.\n// ============================================================\nconst geocodeResult = $('Geocode Location').first().json;\nconst intent = $('WF2 — HTTP Trigger').first().json.body;\nconst parsedIntent = intent.output || intent;\n\nconst geocodeSuccess = geocodeResult.results && geocodeResult.results.length > 0;\n\nif (geocodeSuccess) {\n  // Pass through normally\n  return [{ json: {\n    lat: geocodeResult.results[0].geometry.location.lat,\n    lng: geocodeResult.results[0].geometry.location.lng,\n    formatted_address: geocodeResult.results[0].formatted_address,\n    source: 'google_maps'\n  }}];\n}\n\n// Fallback: known coordinates for Islamabad sectors\nconst areaFallbackMap = {\n  'g-13': { lat: 33.6557, lng: 73.0138 },\n  'g-14': { lat: 33.6490, lng: 73.0050 },\n  'g-11': { lat: 33.6844, lng: 73.0066 },\n  'f-10': { lat: 33.7076, lng: 73.0287 },\n  'f-11': { lat: 33.7183, lng: 73.0234 },\n  'i-8':  { lat: 33.6715, lng: 73.0752 },\n  'i-9':  { lat: 33.6644, lng: 73.0848 },\n  'e-11': { lat: 33.7386, lng: 73.0124 },\n  'islamabad': { lat: 33.6844, lng: 73.0479 }\n};\n\nconst locationKey = (parsedIntent.location || '').toLowerCase().replace(/\\s+/g, '-');\nconst matched = Object.keys(areaFallbackMap).find(k => locationKey.includes(k));\nconst coords = matched ? areaFallbackMap[matched] : areaFallbackMap['islamabad'];\n\nconsole.log('⚠️ Maps API fallback triggered for:', parsedIntent.location, '→', matched || 'islamabad default');\n\nreturn [{ json: {\n  lat: coords.lat,\n  lng: coords.lng,\n  formatted_address: parsedIntent.location + ', Islamabad (fallback coordinates)',\n  source: 'area_name_fallback',\n  fallback_reason: 'Google Maps Geocoding returned no results'\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1776,
+        1632
+      ],
+      "id": "ed6c9f10-c922-46e7-b6e0-1777c12e7722",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "jsCode": "// =========================\n// INPUT SAFE HANDLING (FIXED)\n// =========================\nlet inputRaw = $json.body;\n\nif (!inputRaw) {\n  inputRaw = \"\";\n}\n\nlet input = \"\";\n\nif (typeof inputRaw === \"string\") {\n  input = inputRaw;\n} else {\n  input = JSON.stringify(inputRaw);\n}\n\nconst text = input.toLowerCase();\n\n// =========================\n// BASE OUTPUT\n// =========================\n// Removed \": any\" to fix the SyntaxError in JavaScript\nconst result = {};\n\n// defaults\nresult.urgency = \"medium\";\nresult.preferred_time = \"asap\";\nresult.budget_sensitivity = \"medium\";\nresult.job_complexity = \"basic\";\nresult.detected_language = \"english\";\n\n// =========================\n// LANGUAGE DETECTION\n// =========================\nif (/[\\u0600-\\u06FF]/.test(input)) {\n  result.detected_language = \"urdu\";\n}\nelse if (\n  text.includes(\"chahiye\") ||\n  text.includes(\"masla\") ||\n  text.includes(\"jaldi\") ||\n  text.includes(\"sasta\") ||\n  text.includes(\"bijli\") ||\n  text.includes(\"pani\")\n) {\n  result.detected_language = \"roman_urdu\";\n}\n\n// =========================\n// URGENCY DETECTION\n// =========================\nif (\n  text.includes(\"urgent\") ||\n  text.includes(\"jaldi\") ||\n  text.includes(\"asap\") ||\n  text.includes(\"emergency\") ||\n  text.includes(\"abhi\") ||\n  text.includes(\"فوری\")\n) {\n  result.urgency = \"high\";\n}\n\n// =========================\n// BUDGET DETECTION\n// =========================\nif (\n  text.includes(\"sasta\") ||\n  text.includes(\"cheap\") ||\n  text.includes(\"affordable\") ||\n  text.includes(\"kam budget\")\n) {\n  result.budget_sensitivity = \"high\";\n}\n\n// =========================\n// CITY DETECTION\n// =========================\nlet city = null;\n\nif (text.includes(\"karachi\")) city = \"Karachi\";\nelse if (text.includes(\"lahore\")) city = \"Lahore\";\nelse if (text.includes(\"islamabad\")) city = \"Islamabad\";\n\nif (city) {\n  result.city = city;\n}\n\n// =========================\n// AREA DETECTION (SAFE VERSION)\n// =========================\nlet area = null;\n\nif (text.includes(\"clifton block\")) {\n  area = \"Clifton Block\";\n}\nelse if (text.includes(\"clifton\")) {\n  area = \"Clifton\";\n}\nelse if (text.includes(\"dha phase\")) {\n  area = \"DHA Phase\";\n}\nelse if (text.includes(\"johar town\")) {\n  area = \"Johar Town\";\n}\nelse if (text.includes(\"model town\")) {\n  area = \"Model Town\";\n}\nelse if (text.includes(\"bahria town\")) {\n  area = \"Bahria Town\";\n}\n\nif (area) {\n  result.area = area;\n}\n\n// =========================\n// LOCATION COMBINE\n// =========================\nif (city && area) {\n  result.location = city + \", \" + area;\n}\nelse if (city) {\n  result.location = city;\n}\nelse if (area) {\n  result.location = area;\n}\n\n// =========================\n// SERVICE DETECTION (SAFE AI STYLE)\n// =========================\nlet service = null;\n\nif (\n  text.includes(\"ac\") ||\n  text.includes(\"cooling\") ||\n  text.includes(\"compressor\") ||\n  text.includes(\"thanda\")\n) {\n  service = \"AC repair\";\n}\nelse if (\n  text.includes(\"plumber\") ||\n  text.includes(\"pipe\") ||\n  text.includes(\"leak\") ||\n  text.includes(\"tap\") ||\n  text.includes(\"nalka\")\n) {\n  service = \"plumber\";\n}\nelse if (\n  text.includes(\"electrician\") ||\n  text.includes(\"switch\") ||\n  text.includes(\"light\") ||\n  text.includes(\"bijli\")\n) {\n  service = \"electrician\";\n}\nelse if (\n  text.includes(\"teacher\") ||\n  text.includes(\"tutor\") ||\n  text.includes(\"tuition\") ||\n  text.includes(\"math\")\n) {\n  service = \"tutor\";\n}\nelse if (\n  text.includes(\"paint\") ||\n  text.includes(\"rang\")\n) {\n  service = \"painter\";\n}\nelse if (\n  text.includes(\"carpenter\") ||\n  text.includes(\"wood\")\n) {\n  service = \"carpenter\";\n}\nelse if (\n  text.includes(\"beautician\") ||\n  text.includes(\"makeup\") ||\n  text.includes(\"facial\")\n) {\n  service = \"beautician\";\n}\n\nif (service) {\n  result.service_type = service;\n}\n\n// =========================\n// CONFIDENCE (SIMPLE SAFE SCORE)\n// =========================\nlet confidence = 0;\n\nif (service) confidence += 0.5;\nif (city) confidence += 0.2;\nif (area) confidence += 0.2;\n\nresult.confidence = confidence;\n\n// =========================\n// FINAL OUTPUT (n8n SAFE)\n// =========================\nreturn [\n  {\n    json: result\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        1024
+      ],
+      "id": "1d531fbb-8506-46e9-b0fa-e5894e44d436",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c73f6d99-8866-4ed1-8bd7-89208c5bf0d0",
+              "name": "location",
+              "value": "={{ $json.location }}",
+              "type": "string"
+            },
+            {
+              "id": "c952c034-c3d0-4d12-9d18-7e93e69b9a58",
+              "name": "urgency",
+              "value": "={{ $json.urgency }}",
+              "type": "string"
+            },
+            {
+              "id": "de93d389-336f-407c-9246-06a041b7822e",
+              "name": "preferred_time",
+              "value": "={{ $json.preferred_time }}",
+              "type": "string"
+            },
+            {
+              "id": "493c4b4b-9d97-42d1-86c3-40434ae63925",
+              "name": "budget_sensitivity",
+              "value": "={{ $json.budget_sensitivity }}",
+              "type": "string"
+            },
+            {
+              "id": "6fa70f9e-fb19-4620-bfb6-a1b3c9ed3fb8",
+              "name": "job_complexity",
+              "value": "={{ $json.job_complexity }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1104,
+        1024
+      ],
+      "id": "2a64c38d-f479-4051-81a0-a5026f659204",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e680a08a-9657-4e3e-a3b7-859b79659b04",
+              "name": "body.service_type",
+              "value": "={{ $json.body.service_type }}",
+              "type": "string"
+            },
+            {
+              "id": "f3e388ad-00f6-4832-b445-07c737841bff",
+              "name": "body.raw_message",
+              "value": "={{ $json.body.raw_message }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1104,
+        1216
+      ],
+      "id": "6fbb8566-5c3d-4d9b-85aa-082dfbeb3b52",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1328,
+        1120
+      ],
+      "id": "f56fcfda-3f1f-4dec-92b3-4315d4f8ea95",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get all incoming items\nconst items = $input.all();\n\n// Create empty result object\nlet mergedData = {};\n\n// Loop through all items\nfor (const item of items) {\n  const data = item.json;\n\n  // If nested under body, extract it\n  if (data.body) {\n    Object.assign(mergedData, data.body);\n  } else {\n    Object.assign(mergedData, data);\n  }\n}\n\nreturn [\n  {\n    json: mergedData\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1552,
+        1120
+      ],
+      "id": "81f03121-e670-47ae-9940-edd10a808e94",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Multi-Service Orchestration Logic\nconst output = $json.output;\nconst services = output.services || [output.primary_service];\nconst primaryService = output.primary_service || services[0];\n\n// For single service: pass through directly\nif (services.length === 1) {\n  return [{\n    json: {\n      ...output,\n      service_type: primaryService,\n      is_multi_service: false\n    }\n  }];\n}\n\n// For multi-service: prepare aggregation payload\nreturn [{\n  json: {\n    ...output,\n    service_type: 'Multi-Service Package',\n    primary_service: primaryService,\n    services: services,\n    is_multi_service: true,\n    service_count: services.length\n  }\n}];"
+      },
+      "id": "51a1e2f6-6595-4628-8b73-22494c444c22",
+      "name": "Multi-Service Orchestrator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2352,
+        1024
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// WF2 Multi-Service Handler — Normalize services array\nconst intent = $json.body;\nconst services = intent.services || [intent.primary_service || intent.service_type];\nconst isMultiService = intent.is_multi_service || services.length > 1;\n\n// Normalize: ensure we have actual service names, not \"Multi-Service Package\"\nconst normalizedServices = services.filter(s => s && s !== \"Multi-Service Package\");\n\nif (normalizedServices.length === 0 && intent.primary_service) {\n  normalizedServices.push(intent.primary_service);\n}\n\nreturn [{\n  json: {\n    ...intent,\n    services: normalizedServices,\n    service_type: isMultiService ? intent.primary_service : normalizedServices[0],\n    is_multi_service: isMultiService,\n    total_services: normalizedServices.length\n  }\n}];"
+      },
+      "id": "82057a08-d1f1-407e-b2b7-6381efa6c6e6",
+      "name": "WF2 Multi-Service Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        1536
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// KHADMAT AI — 6-Factor Provider Scoring Algorithm with Multi-Service + Complexity Matching\n\nconst intent = $('WF2 — HTTP Trigger1').first().json.body;\nconst parsedIntent = intent.output || intent;\n\nlet requestedServices = parsedIntent.services || [];\n\nif (requestedServices.length === 0) {\n  const fallbackService = parsedIntent.primary_service || parsedIntent.service_type;\n  if (fallbackService && fallbackService !== 'Multi-Service Package') {\n    requestedServices = [fallbackService];\n  }\n}\n\nrequestedServices = requestedServices.filter(s => s && s !== 'Multi-Service Package');\n\nif (requestedServices.length === 0) {\n  return [{ json: {\n    status: 'invalid_intent',\n    message: 'No valid services found in request',\n    received_intent: parsedIntent,\n    workflow: 'WF2-ProviderMatching'\n  }}];\n}\n\nconst providers = $('Map Places → Provider Schema1').first().json.providers || [];\n\nif (providers.length === 0) {\n  return [{ json: {\n    status: 'no_providers_available',\n    message: 'Map Places node returned 0 providers',\n    requested_services: requestedServices,\n    workflow: 'WF2-ProviderMatching'\n  }}];\n}\n\n// ── Complexity tier ordering ──────────────────────────────\nconst COMPLEXITY_ORDER = { 'basic': 0, 'intermediate': 1, 'complex': 2 };\n\nconst multiServiceResults = [];\n\nfor (const serviceType of requestedServices) {\n\n  const scored = providers.map(provider => {\n\n    // ── Service name match ────────────────────────────────\n    const normalizedService = serviceType.toLowerCase();\n    const providerServices = (provider.services || []).map(s => s.toLowerCase());\n    const serviceMatch = providerServices.some(s =>\n      s.includes(normalizedService) || normalizedService.includes(s)\n    );\n\n    // ── NEW: Complexity match ─────────────────────────────\n    // Does provider's complexity_levels cover what the user needs?\n    const requestedComplexity = parsedIntent.job_complexity || 'basic';\n    const providerComplexityLevels = provider.complexity_levels || ['basic'];\n\n    const complexityMatch = providerComplexityLevels.includes(requestedComplexity);\n\n    // How far is the provider's max complexity from what's needed?\n    const providerMaxComplexityRank = Math.max(\n      ...providerComplexityLevels.map(c => COMPLEXITY_ORDER[c] ?? 0)\n    );\n    const requestedComplexityRank = COMPLEXITY_ORDER[requestedComplexity] ?? 0;\n    const complexityGap = requestedComplexityRank - providerMaxComplexityRank;\n\n    // ── Specialization score (now complexity-aware) ───────\n    let specializationScore;\n    if (!serviceMatch) {\n      // Provider doesn't offer this service at all\n      specializationScore = 20;\n    } else if (complexityMatch) {\n      // Exact service + handles the required complexity\n      specializationScore = 100;\n    } else if (complexityGap === 1) {\n      // One tier short (e.g. provider does basic/intermediate, user needs complex)\n      specializationScore = 55;\n    } else {\n      // Two tiers short (provider only does basic, user needs complex)\n      specializationScore = 25;\n    }\n\n    // ── Distance Score ────────────────────────────────────\n    const distanceScore = Math.max(0, 100 - (provider.distance_km * 10));\n\n    // ── Availability Score ────────────────────────────────\n    const hasSlots = provider.availability_slots?.length > 0;\n    const underCapacity = provider.active_bookings < provider.max_daily_bookings;\n    const availabilityScore = hasSlots && underCapacity ? 100 : hasSlots ? 50 : 0;\n\n    // ── Review Score ──────────────────────────────────────\n    const ratingScore = (provider.rating / 5) * 100;\n    const daysSinceReview = Math.floor(\n      (new Date() - new Date(provider.last_review_date)) / 86400000\n    );\n    const recencyBonus = daysSinceReview <= 3 ? 15\n      : daysSinceReview <= 7 ? 10\n      : daysSinceReview <= 30 ? 5 : 0;\n    const reviewScore = Math.min(100, ratingScore + recencyBonus);\n\n    // ── Reliability Score ─────────────────────────────────\n    const reliabilityScore = provider.on_time_score * 100;\n\n    // ── Price Score ───────────────────────────────────────\n    let priceScore = 70;\n    if (parsedIntent.budget_sensitivity === 'high') {\n      if (provider.base_rate_pkr <= 700)       priceScore = 100;\n      else if (provider.base_rate_pkr <= 1000) priceScore = 70;\n      else if (provider.base_rate_pkr <= 1500) priceScore = 45;\n      else                                      priceScore = 20;\n    } else if (parsedIntent.budget_sensitivity === 'low') {\n      priceScore = 80;\n    } else {\n      priceScore = provider.base_rate_pkr <= 1000 ? 80 : 60;\n    }\n\n    // ── Cancellation Score ────────────────────────────────\n    const cancellationScore = Math.max(0, 100 - (provider.cancellation_rate * 500));\n\n    // ── Weighted Total ────────────────────────────────────\n    const totalScore = (\n      distanceScore      * 0.20 +\n      availabilityScore  * 0.20 +\n      reviewScore        * 0.15 +\n      reliabilityScore   * 0.15 +\n      specializationScore * 0.15 +\n      priceScore         * 0.10 +\n      cancellationScore  * 0.05\n    );\n\n    return {\n      ...provider,\n      service_match: serviceMatch,\n      complexity_match: complexityMatch,\n      complexity_gap: complexityGap,\n      requested_complexity: requestedComplexity,\n      provider_complexity_levels: providerComplexityLevels,\n      computed_score: Math.round(totalScore),\n      score_breakdown: {\n        distance:       Math.round(distanceScore),\n        availability:   Math.round(availabilityScore),\n        review:         Math.round(reviewScore),\n        reliability:    Math.round(reliabilityScore),\n        specialization: Math.round(specializationScore),\n        price:          Math.round(priceScore),\n        cancellation:   Math.round(cancellationScore),\n        total:          Math.round(totalScore)\n      }\n    };\n  });\n\n  scored.sort((a, b) => b.computed_score - a.computed_score);\n\n  multiServiceResults.push({\n    service: serviceType,\n    requested_complexity: parsedIntent.job_complexity || 'basic',\n    top_match: scored[0] || null,\n    alternatives: scored.slice(1, 7),\n    total_evaluated: scored.length,\n    status: scored.length > 0 ? 'providers_found' : 'no_providers_found'\n  });\n}\n\nreturn [{ json: {\n  status: 'success',\n  workflow: 'WF2-ProviderMatching',\n  is_multi_service: requestedServices.length > 1,\n  services: multiServiceResults,\n  service_count: requestedServices.length,\n  location: parsedIntent.location || null,\n  total_providers_evaluated: providers.length\n}}];"
+      },
+      "id": "4cf4707c-dee4-4012-81de-1773e3665c7b",
+      "name": "Calculate Provider Scores",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3120,
+        1440
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a multilingual service request parser for Pakistan's home services market. The user may write in Urdu, Roman Urdu, English, or a mix of these languages (code-switching). Your job is to extract structured intent from noisy, informal input.\n\nExtract these fields:\n- services: an ARRAY of service types. Extract ALL services mentioned. Valid services include:\n  * AC repair, AC installation, AC gas refill\n  * Plumber, Electrician, Carpenter, Painter\n  * Tutor, Beautician, Generator mechanic\n  * Solar installation, Solar panel, Solar system\n  * Geyser repair, Geyser installation, Water heater\n  * Washing machine repair, Washing machine installation\n  * Refrigerator repair, Fridge repair\n  * Microwave repair, Oven repair\n  * Dishwasher repair, Dishwasher installation\n  * Water dispenser repair, Water filter\n  * Pest control, Fumigation, Termite treatment\n  * Maid, Cook, Laundry, Cleaning\n  * Car mechanic, Bike mechanic, Puncture repair\n  * Nurse, Physiotherapist, Doctor\n  * CCTV installation, Networking, WiFi setup, Router setup\n  * Phone repair, Mobile repair, Laptop repair, Computer repair\n  * TV repair, Iron repair\n  * Mason, Tiler, Welder, False ceiling\n  * Waterproofing, Deep cleaning\n  * Gardener, Driver, Security guard, Car wash\n  * Lab test, Interior designer\n  * Any other home service the user mentions\n  \n  If the service is not in this list, STILL EXTRACT IT as-is (e.g., \"solar installation\" → \"solar installation\", not \"AC installation\")\n\n- primary_service: the most critical or first mentioned service from the array\n- location: area or sector name as mentioned by user (city + area, or just area name)\n- urgency: low / medium / high\n- preferred_time: human readable time preference e.g. tomorrow morning, today evening, asap\n- budget_sensitivity: low / medium / high (high means user is price conscious)\n- job_complexity: basic / intermediate / complex\n- confidence_score: integer 0 to 100\n- clarification_needed: true if confidence below 70, else false\n- clarification_question: ask in the same language the user wrote in, or null if not needed\n- detected_language: urdu / roman_urdu / english / mixed\n\nRules:\n- If urgency words like 'abhi', 'jaldi', 'urgent', 'asap', 'emergency' appear → urgency = high\n- If budget words like 'sasta', 'kam budget', 'cheap', 'affordable', 'budget nahi' appear → budget_sensitivity = high\n- If location is missing → clarification_needed = true, ask for location\n- If service type is ambiguous → clarification_needed = true\n- job_complexity: basic = simple fix/check, intermediate = repair/replacement, complex = installation/overhaul\n- IMPORTANT: Extract MULTIPLE services if mentioned (e.g., 'AC aur electrician' → services: ['AC repair', 'electrician'])\n- CRITICAL: Do NOT force-fit unknown services to known ones. If user says \"solar installation\", extract \"solar installation\" exactly, not \"AC installation\"\n- Support all major Pakistani cities: Lahore, Karachi, Islamabad, Rawalpindi, Faisalabad, Peshawar, Multan, Quetta, etc.\n- Support common areas: DHA, Bahria Town, Model Town, Johar Town, Clifton, Defence, Cantt, etc.\n\nUser request: {{ $json.raw_message }}",
+        "hasOutputParser": true,
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        1776,
+        1008
+      ],
+      "id": "e4a598fe-a9b5-4822-83a6-5697fea55958",
+      "name": "Basic LLM Chain1"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1776,
+        1232
+      ],
+      "id": "3e16283b-1302-446f-bdb2-b117f9720e79",
+      "name": "OpenAI Chat Model1",
+      "credentials": {
+        "openAiApi": {
+          "id": "iKNy3mQPQnEGIjyu",
+          "name": "gharfix intent"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"services\": [\"AC repair\", \"electrician\"],\n  \"primary_service\": \"AC repair\",\n  \"location\": \"G-13\",\n  \"urgency\": \"high\",\n  \"preferred_time\": \"kal subah\",\n  \"budget_sensitivity\": \"medium\",\n  \"job_complexity\": \"basic\",\n  \"confidence_score\": 85,\n  \"clarification_needed\": false,\n  \"clarification_question\": null,\n  \"detected_language\": \"mixed\"\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1920,
+        1232
+      ],
+      "id": "2e76963a-e8c8-44dd-9ed6-aaacfc5a96f2",
+      "name": "Structured Output Parser1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "confidence-check",
+              "leftValue": "={{ $json.output.confidence_score }}",
+              "rightValue": 70,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "63e52958-c2da-4fc6-8b9e-390bc97982cb",
+      "name": "Confidence ≥ 70?1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2128,
+        1120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://n8ndigitalstudio.duckdns.org/webhook/khadmat-provider-match",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "70ec119e-1351-4e48-98cc-853deef3e94e",
+      "name": "Call WF2 — Provider Matching1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2576,
+        1024
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"success\",\n  \"stage\": \"booking_ready\",\n  \"matching_result\": {{ JSON.stringify($json) }}\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "286b7101-2062-416a-85f7-d41b8edc0418",
+      "name": "Respond — Success + Matches1",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2800,
+        1024
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"clarification_needed\",\n  \"stage\": \"intent_extraction\",\n  \"confidence_score\": {{ $json.confidence_score }},\n  \"detected_language\": \"{{ $json.detected_language }}\",\n  \"clarification_question\": \"{{ $json.clarification_question }}\",\n  \"original_input\": \"{{ $json.original_input }}\",\n  \"timestamp\": \"{{ $json.timestamp }}\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "d262fab3-2de7-4a1a-9675-c74670aa66b2",
+      "name": "Respond — Ask Clarification1",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2352,
+        1216
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "khadmat-provider-match",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "3d4f51d8-2809-405e-a4b2-2ac58a1c788c",
+      "name": "WF2 — HTTP Trigger1",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        656,
+        1536
+      ],
+      "webhookId": "93f5f5a4-89be-4375-9379-be1ec346a8e7"
+    },
+    {
+      "parameters": {
+        "url": "=https://maps.googleapis.com/maps/api/geocode/json?address={{ encodeURIComponent(($('WF2 — HTTP Trigger1').first().json.body.output?.location || $('WF2 — HTTP Trigger1').first().json.body.location)) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "services_type",
+              "value": "={{ $json.services }}"
+            },
+            {
+              "name": "location",
+              "value": "={{ $json.location }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "83c7754a-ea20-491e-b441-6b390a0c0c63",
+      "name": "Geocode Location1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1328,
+        1536
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "iO5QR4CJv1AnjkHs",
+          "name": "googleMapsApi"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "lat-assign",
+              "name": "lat",
+              "value": "={{ $json.results[0].geometry.location.lat }}",
+              "type": "number"
+            },
+            {
+              "id": "lng-assign",
+              "name": "lng",
+              "value": "={{ $json.results[0].geometry.location.lng }}",
+              "type": "number"
+            },
+            {
+              "id": "addr-assign",
+              "name": "formatted_address",
+              "value": "={{ $json.results[0].formatted_address }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "50676520-1ac7-4d86-ac2e-26b9ff08bea6",
+      "name": "Extract Lat/Lng1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1776,
+        1440
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://maps.googleapis.com/maps/api/place/textsearch/json?query={{ encodeURIComponent($(\"Edit Fields2\").first().json.services.join(\" \") + \" service near \" + $(\"Edit Fields2\").first().json.location) }}&location={{ $json.lat }},{{ $json.lng }}&radius=5000",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "options": {}
+      },
+      "id": "95a817b7-e36a-4e50-8192-6e21f5bebb36",
+      "name": "Places Nearby Search1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2000,
+        1536
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "iO5QR4CJv1AnjkHs",
+          "name": "googleMapsApi"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://maps.googleapis.com/maps/api/distancematrix/json?origins={{ $('Extract Lat/Lng1').first().json.lat }},{{ $('Extract Lat/Lng1').first().json.lng }}&destinations={{ $json.results.map(p => p.geometry.location.lat + ',' + p.geometry.location.lng).join('|') }}&mode=driving",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "options": {}
+      },
+      "id": "f69c5000-ad18-4caf-8ae3-7618c7430047",
+      "name": "Distance Matrix API1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2448,
+        1440
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "iO5QR4CJv1AnjkHs",
+          "name": "googleMapsApi"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings?booking_date=eq.{{ new Date().toISOString().split('T')[0] }}&status=in.(confirmed,in_progress)&select=provider_id",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Authorization",
+              "value": "YOUR_SUPABASE_ANON_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ea8b1238-69bc-49c4-ac94-842cc3f360ec",
+      "name": "Fetch Provider Capacity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2672,
+        1440
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// KHADMAT AI — Map Google Places results → provider schema\n// active_bookings now sourced from real Supabase data (today's confirmed/in_progress)\nconst placesResults = $('Places Nearby Search1').first().json.results || [];\nconst distanceRows = $('Distance Matrix API1').first().json.rows || [];\nconst intent = $('WF2 — HTTP Trigger1').first().json.body;\nconst parsedIntent = intent.output || intent;\n\n// ── Build a real active_bookings map from Supabase capacity query ──\n// Supabase returns an array of { provider_id } rows (one row per booking).\n// We count how many bookings each provider_id has today.\nconst capacityRows = $input.all().map(r => r.json).filter(r => r && r.provider_id);\nconst activeBookingsMap = {};\nfor (const row of capacityRows) {\n  const pid = row.provider_id;\n  activeBookingsMap[pid] = (activeBookingsMap[pid] || 0) + 1;\n}\n\nconsole.log('=== WF2 Capacity Map ===');\nconsole.log('Providers with active bookings today:', Object.keys(activeBookingsMap).length);\nconsole.log('Capacity map:', JSON.stringify(activeBookingsMap));\n\nconst complexityKeywords = {\n  'AC installation': 'complex',\n  'AC repair': 'intermediate',\n  'AC gas refill': 'basic',\n  'plumber': 'basic',\n  'electrician': 'intermediate',\n  'carpenter': 'intermediate',\n  'painter': 'basic',\n  'tutor': 'basic',\n  'beautician': 'basic',\n  'generator mechanic': 'intermediate'\n};\n\nconst MAX_DAILY_BOOKINGS = 4;\n\nconst providers = placesResults.map((place, i) => {\n  const distanceElement = distanceRows[i]?.elements?.[0];\n  const distanceKm = distanceElement?.status === 'OK'\n    ? parseFloat((distanceElement.distance.value / 1000).toFixed(1))\n    : 5.0;\n\n  const priceLevel = place.price_level ?? 2;\n  const baseRateMap = { 0: 400, 1: 600, 2: 900, 3: 1300, 4: 2000 };\n  const baseRate = baseRateMap[Math.round(priceLevel)] || 900;\n\n  const rating = place.rating ?? 4.0;\n  const reviewCount = place.user_ratings_total ?? 10;\n\n  // ── Real active_bookings from Supabase ──\n  const activeBookings = activeBookingsMap[place.place_id] || 0;\n  const isAtCapacity = activeBookings >= MAX_DAILY_BOOKINGS;\n\n  // Slots: if provider is at capacity, show no slots\n  const isOpen = place.opening_hours?.open_now ?? false;\n  const availabilitySlots = isAtCapacity\n    ? []\n    : isOpen\n    ? ['09:00', '11:00', '14:00', '16:00']\n    : ['09:00', '11:00'];\n\n  const verified = place.business_status === 'OPERATIONAL';\n  const reputationScore = Math.min(99, Math.round(\n    (rating / 5) * 70 + Math.min(30, (reviewCount / 100) * 30)\n  ));\n\n  return {\n    id: place.place_id,\n    name: place.name,\n    owner: place.name,\n    services: parsedIntent.services || [parsedIntent.service_type],\n    complexity_levels: (() => {\n      const base = complexityKeywords[parsedIntent.service_type] || 'basic';\n      const levels = {\n        basic: ['basic'],\n        intermediate: ['basic', 'intermediate'],\n        complex: ['basic', 'intermediate', 'complex']\n      };\n      return levels[base];\n    })(),\n    areas: [parsedIntent.location],\n    coordinates: {\n      lat: place.geometry.location.lat,\n      lng: place.geometry.location.lng\n    },\n    address: place.vicinity,\n    base_rate_pkr: baseRate,\n    rating: rating,\n    review_count: reviewCount,\n    last_review_date: new Date().toISOString().split('T')[0],\n    on_time_score: Math.min(0.99, 0.70 + (rating - 3.5) * 0.1),\n    cancellation_rate: Math.max(0.01, 0.15 - (rating - 3.5) * 0.04),\n    availability_slots: availabilitySlots,\n    active_bookings: activeBookings,\n    max_daily_bookings: MAX_DAILY_BOOKINGS,\n    at_capacity: isAtCapacity,\n    distance_km: distanceKm,\n    verified: verified,\n    reputation_score: reputationScore,\n    google_maps_url: `https://maps.google.com/?q=${encodeURIComponent(place.name)}`,\n    place_id: place.place_id,\n    photos: place.photos?.slice(0, 1).map(p =>\n      `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${p.photo_reference}&key=YOUR_KEY`\n    ) || []\n  };\n});\n\nif (providers.length === 0) {\n  return [{\n    json: {\n      providers: [],\n      warning: 'Google Places returned 0 results. Check API key and service keyword.',\n      location_used: parsedIntent.location,\n      service_queried: parsedIntent.service_type\n    }\n  }];\n}\n\nreturn [{ json: { providers } }];"
+      },
+      "id": "e25a2538-abdf-4dad-a949-47d3db8ca5f1",
+      "name": "Map Places → Provider Schema1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2896,
+        1440
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// KHADMAT AI — WF3 Pricing Agent (inline after WF2) with Multi-Service Support\nconst matchResult = $input.first().json;\nconst intent = $('WF2 — HTTP Trigger1').first().json.body;\nconst parsedIntent = intent.output || intent;\n\n// Handle multi-service structure from Calculate Provider Scores\nconst servicesArray = matchResult.services || [];\n\nif (servicesArray.length === 0) {\n  return [{ json: { status: 'error', message: 'No services found in match result', received: matchResult } }];\n}\n\n// Process pricing for each service\nconst pricedServices = servicesArray.map(serviceResult => {\n  const provider = serviceResult.top_match;\n  \n  if (!provider) {\n    return {\n      service: serviceResult.service,\n      status: 'no_provider',\n      message: 'No provider found for this service'\n    };\n  }\n\n  const baseRate = provider.base_rate_pkr;\n\n  // 1. Complexity Multiplier\n  const complexityMap = { 'basic': 1.0, 'intermediate': 1.3, 'complex': 1.6 };\n  const complexityMultiplier = complexityMap[parsedIntent.job_complexity] || 1.0;\n  const complexityAddition = Math.round(baseRate * (complexityMultiplier - 1));\n\n  // 2. Surge Pricing (Time-based)\n  const currentHour = new Date().getHours();\n  const isSurgeTime = (currentHour >= 9 && currentHour <= 11) || (currentHour >= 17 && currentHour <= 19);\n  const surgeMultiplier = isSurgeTime ? 1.2 : 1.0;\n  const surgeAddition = Math.round((baseRate + complexityAddition) * (surgeMultiplier - 1));\n\n  // 3. Distance Cost\n  const distanceCost = Math.round(provider.distance_km * 50);\n\n  const totalPrice = baseRate + complexityAddition + surgeAddition + distanceCost;\n\n  return {\n    service: serviceResult.service,\n    provider: provider,\n    alternatives: serviceResult.alternatives || [],\n    pricing: {\n      total_pkr: totalPrice,\n      breakdown: {\n        base_rate: baseRate,\n        complexity_extra: complexityAddition,\n        surge_extra: surgeAddition,\n        distance_extra: distanceCost\n      },\n      display: `${serviceResult.service}: PKR ${totalPrice} (Base: ${baseRate} + Complexity: ${complexityAddition} + Surge: ${surgeAddition} + Distance: ${distanceCost})`\n    }\n  };\n});\n\n// Calculate multi-service discount if applicable\nconst isMultiService = pricedServices.length > 1;\nconst totalBeforeDiscount = pricedServices.reduce((sum, s) => sum + (s.pricing?.total_pkr || 0), 0);\nconst multiServiceDiscount = isMultiService ? Math.round(totalBeforeDiscount * 0.1) : 0;\nconst grandTotal = totalBeforeDiscount - multiServiceDiscount;\n\nreturn [{ \n  json: {\n    status: 'success',\n    workflow: 'WF3-Pricing',\n    is_multi_service: isMultiService,\n    services: pricedServices,\n    summary: {\n      total_services: pricedServices.length,\n      subtotal_pkr: totalBeforeDiscount,\n      multi_service_discount_pkr: multiServiceDiscount,\n      grand_total_pkr: grandTotal,\n      location: parsedIntent.location,\n      job_complexity: parsedIntent.job_complexity\n    }\n  }\n}];"
+      },
+      "id": "ff186c2f-c0ba-4f0f-9545-cc1da4a2306e",
+      "name": "WF3 — Pricing Agent (inline)1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3344,
+        1440
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "518bd01b-fe9c-4a56-9214-d2a865efc981",
+      "name": "Respond — Providers + Pricing1",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3568,
+        1440
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9577f13d-b52e-429d-9611-5616c24f2b25",
+              "name": "services",
+              "value": "={{ $json.services }}",
+              "type": "array"
+            },
+            {
+              "id": "5358b0e8-beba-4cec-91ea-538e27d076f5",
+              "name": "location",
+              "value": "={{ $json.location }}",
+              "type": "string"
+            },
+            {
+              "id": "a6a0fc09-bf2c-4462-81fd-f699cd90612c",
+              "name": "urgency",
+              "value": "={{ $json.urgency }}",
+              "type": "string"
+            },
+            {
+              "id": "9bd79cb8-e0b9-4b7e-9cc8-6fa018eb684e",
+              "name": "preferred_time",
+              "value": "={{ $json.preferred_time }}",
+              "type": "string"
+            },
+            {
+              "id": "bc5d4fcd-47ef-4c95-8a4a-b98252b8fff0",
+              "name": "budget_sensitivity",
+              "value": "={{ $json.budget_sensitivity }}",
+              "type": "string"
+            },
+            {
+              "id": "9dd19e08-039b-44aa-82de-a5129373b789",
+              "name": "confidence_score",
+              "value": "={{ $json.confidence_score }}",
+              "type": "number"
+            },
+            {
+              "id": "daf1680f-9f2e-493d-bb42-c93f2065407a",
+              "name": "clarification_needed",
+              "value": "={{ $json.clarification_needed }}",
+              "type": "boolean"
+            },
+            {
+              "id": "2944aa62-e93a-4081-b08a-b19fb3ab79f0",
+              "name": "detected_language",
+              "value": "={{ $json.detected_language }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1104,
+        1536
+      ],
+      "id": "f8f91970-8f93-4345-bca4-fa1711fc32c3",
+      "name": "Edit Fields2"
+    }
+  ],
+  "pinData": {
+    "WF2 — HTTP Trigger1": [
+      {
+        "json": {
+          "headers": {
+            "host": "n8ndigitalstudio.duckdns.org",
+            "x-real-ip": "13.62.255.36",
+            "x-forwarded-for": "13.62.255.36",
+            "x-forwarded-proto": "https",
+            "connection": "upgrade",
+            "content-length": "344",
+            "accept": "application/json,text/html,application/xhtml+xml,application/xml,text/*;q=0.9, image/*;q=0.8, */*;q=0.7",
+            "content-type": "application/json",
+            "user-agent": "axios/1.13.5",
+            "accept-encoding": "gzip, compress, deflate, br"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "services": [
+              "Plumber"
+            ],
+            "primary_service": "Plumber",
+            "location": "Johar Town, Lahore",
+            "urgency": "high",
+            "preferred_time": "asap",
+            "budget_sensitivity": "high",
+            "job_complexity": "intermediate",
+            "confidence_score": 85,
+            "clarification_needed": false,
+            "clarification_question": null,
+            "detected_language": "mixed",
+            "service_type": "Plumber",
+            "is_multi_service": false
+          },
+          "webhookUrl": "https://n8ndigitalstudio.duckdns.org/webhook/khadmat-provider-match",
+          "executionMode": "production"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ],
+    "WF1 — HTTP Trigger": [
+      {
+        "json": {
+          "headers": {
+            "host": "n8ndigitalstudio.duckdns.org",
+            "x-real-ip": "34.96.40.159",
+            "x-forwarded-for": "34.96.40.159",
+            "x-forwarded-proto": "https",
+            "connection": "upgrade",
+            "content-length": "273",
+            "content-type": "application/json",
+            "accept": "*/*",
+            "accept-language": "*",
+            "sec-fetch-mode": "cors",
+            "user-agent": "node",
+            "accept-encoding": "br, gzip, deflate"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "raw_message": "Meray bathroom ka pipe leak kar raha hai DHA Lahore jaldi ao  | I need beautician in DHA Lahore ",
+            "service_type": "beautician",
+            "service_types": [
+              "beautician"
+            ],
+            "city": "Lahore",
+            "area": "DHA Lahore",
+            "detected_language": "english",
+            "user_email": "maryumc6@gmail.com"
+          },
+          "webhookUrl": "https://n8ndigitalstudio.duckdns.org/webhook/khadmat-intent",
+          "executionMode": "production"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "WF1 — HTTP Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Distance Matrix API1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Extract Lat/Lng1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Places Nearby Search1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Multi-Service Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Call WF2 — Provider Matching1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF2 Multi-Service Handler": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Provider Scores": {
+      "main": [
+        [
+          {
+            "node": "WF3 — Pricing Agent (inline)1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain1": {
+      "main": [
+        [
+          {
+            "node": "Confidence ≥ 70?1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confidence ≥ 70?1": {
+      "main": [
+        [
+          {
+            "node": "Multi-Service Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond — Ask Clarification1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call WF2 — Provider Matching1": {
+      "main": [
+        [
+          {
+            "node": "Respond — Success + Matches1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF2 — HTTP Trigger1": {
+      "main": [
+        [
+          {
+            "node": "WF2 Multi-Service Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Geocode Location1": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Lat/Lng1": {
+      "main": [
+        [
+          {
+            "node": "Places Nearby Search1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Places Nearby Search1": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Distance Matrix API1": {
+      "main": [
+        [
+          {
+            "node": "Fetch Provider Capacity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Provider Capacity": {
+      "main": [
+        [
+          {
+            "node": "Map Places → Provider Schema1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map Places → Provider Schema1": {
+      "main": [
+        [
+          {
+            "node": "Calculate Provider Scores",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF3 — Pricing Agent (inline)1": {
+      "main": [
+        [
+          {
+            "node": "Respond — Providers + Pricing1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser1": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Basic LLM Chain1",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields2": {
+      "main": [
+        [
+          {
+            "node": "Geocode Location1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "ba2d7ab4-53eb-4490-8602-50f7bfd6e207",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4849cacf29ece9bf383abb54fb2646c4bb8efa5b8d10cc48771c12ba3d91b0b0"
+  },
+  "id": "f8mrJ5nFuIlAyzaC",
+  "tags": [
+    {
+      "updatedAt": "2026-05-15T20:17:04.638Z",
+      "createdAt": "2026-05-15T20:17:04.638Z",
+      "id": "7TIUqObclsfafZNc",
+      "name": "Hackathon"
+    },
+    {
+      "updatedAt": "2026-05-15T20:17:04.629Z",
+      "createdAt": "2026-05-15T20:17:04.629Z",
+      "id": "TQ0mNmjGv8rqs8UG",
+      "name": "Khadmat AI"
+    }
+  ]
+}

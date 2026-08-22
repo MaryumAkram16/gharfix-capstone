@@ -1,0 +1,184 @@
+{
+  "name": "Khadmat AI — Provider Score Refresh (Nightly, Scheduled)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 2 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        300
+      ],
+      "id": "2c0b6681-9d88-42f4-8a8d-b195ae9cbb9f",
+      "name": "Nightly Trigger"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/bookings?select=booking_id,user_email,provider_id,provider_name,reassigned_to_provider_id,service_type,status,slot,booking_date,price_pkr,final_price_pkr,customer_rating,flagged_for_review,provider_action_locked",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ],
+      "id": "404b2d2f-5001-4c2d-b5a1-ac870b4a3b07",
+      "name": "Fetch All Bookings",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Supabase Anon Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WF8 — BATCH OPTIMIZATION ENGINE (scheduled)\n// Computes optimization scores for EVERY provider in one pass,\n// instead of one provider per live webhook request.\n// Google Places enrichment (WF2) is intentionally skipped here —\n// it's per-provider and request-scoped; the dashboard-read flow\n// can still call WF2 live if it wants that layer on top.\n// ============================================================\nconst allBookings = $input.all().map(r => r.json);\nconst now = new Date();\nconst today = now.toISOString().split('T')[0];\nconst maxDailyBookings = 4;       // default fallback, same as WF8 intake default\nconst allPossibleSlots = ['09:00','10:00','11:00','12:00','14:00','15:00','16:00','17:00'];\n\n// ── Platform-wide average (for earning fairness comparisons) ──\nconst platformCompleted = allBookings.filter(b => b.status === 'completed');\nconst platformTotal = platformCompleted.reduce((sum, b) => sum + (parseInt(b.final_price_pkr || b.price_pkr) || 0), 0);\nconst platformAvg = platformCompleted.length > 0 ? Math.round(platformTotal / platformCompleted.length) : 1200;\n\n// ── Distinct provider set: anyone who owns or was reassigned a booking ──\nconst providerIds = new Set();\nallBookings.forEach(b => {\n  if (b.provider_id) providerIds.add(b.provider_id);\n  if (b.reassigned_to_provider_id) providerIds.add(b.reassigned_to_provider_id);\n});\n\nconst results = [];\n\nfor (const myProviderId of providerIds) {\n  const myOriginalBookings = allBookings.filter(b =>\n    b.provider_id === myProviderId &&\n    (!b.reassigned_to_provider_id || b.reassigned_to_provider_id !== myProviderId)\n  );\n  const reassignedToMe = allBookings.filter(b => b.reassigned_to_provider_id === myProviderId);\n  const iLostBookings = myOriginalBookings.filter(b => b.status === 'rescheduled' && b.provider_action_locked);\n\n  const allMyEarningBookings = [\n    ...myOriginalBookings.filter(b => b.status === 'completed'),\n    ...reassignedToMe.filter(b => b.status === 'completed')\n  ];\n\n  // Workload\n  const confirmedToday = myOriginalBookings.filter(b =>\n    b.booking_date === today && (b.status === 'confirmed' || b.status === 'in_progress') && !b.provider_action_locked\n  ).concat(\n    reassignedToMe.filter(b => b.booking_date === today && (b.status === 'confirmed' || b.status === 'in_progress'))\n  );\n  const utilizationRate = Math.round((confirmedToday.length / maxDailyBookings) * 100);\n  const workloadStatus =\n    utilizationRate >= 100 ? 'FULL' :\n    utilizationRate >= 75  ? 'BUSY' :\n    utilizationRate >= 50  ? 'MODERATE' : 'AVAILABLE';\n  const bookedSlotsToday = confirmedToday.map(b => b.slot);\n  const openSlotsToday = allPossibleSlots.filter(s => !bookedSlotsToday.includes(s));\n\n  // Earnings\n  const totalEarnings = allMyEarningBookings.reduce((sum, b) => sum + (parseInt(b.final_price_pkr || b.price_pkr) || 0), 0);\n  const avgEarningPerJob = allMyEarningBookings.length > 0 ? Math.round(totalEarnings / allMyEarningBookings.length) : 0;\n  const earningIndex = avgEarningPerJob > 0 ? parseFloat((avgEarningPerJob / platformAvg).toFixed(2)) : 1.0;\n  const earningFairness = earningIndex >= 0.9 ? 'FAIR' : earningIndex >= 0.7 ? 'BELOW_AVERAGE' : 'LOW';\n\n  // Reputation\n  const ratedBookings = allMyEarningBookings.filter(b => b.customer_rating !== null && b.customer_rating !== undefined);\n  const ratings = ratedBookings.map(b => parseFloat(b.customer_rating));\n  const avgRating = ratings.length > 0 ? parseFloat((ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(2)) : null;\n  const flaggedCount = [...myOriginalBookings, ...reassignedToMe].filter(b => b.flagged_for_review === true).length;\n  const reputationHealth =\n    flaggedCount > 3 ? 'AT_RISK' :\n    flaggedCount > 1 ? 'MONITOR' :\n    avgRating === null ? 'NEW' :\n    avgRating >= 4.5 ? 'EXCELLENT' :\n    avgRating >= 3.5 ? 'GOOD' : 'NEEDS_IMPROVEMENT';\n\n  // Cancellations\n  const cancelledAll = myOriginalBookings.filter(b =>\n    b.status === 'cancelled' || b.status === 'provider_cancelled' || b.status === 'no_show'\n  );\n  const totalBookings = myOriginalBookings.length;\n  const cancellationRate = totalBookings > 0 ? parseFloat((cancelledAll.length / totalBookings).toFixed(2)) : 0;\n  const cancellationStatus =\n    cancellationRate > 0.20 ? 'HIGH_RISK' :\n    cancellationRate > 0.10 ? 'WARNING' : 'GOOD';\n\n  // Loyalty\n  const emailCounts = {};\n  allMyEarningBookings.forEach(b => { if (b.user_email) emailCounts[b.user_email] = (emailCounts[b.user_email] || 0) + 1; });\n  const repeatCustomers = Object.entries(emailCounts).filter(([, c]) => c >= 2);\n\n  // Demand forecast (platform-wide, same for every provider — computed once outside loop would be more efficient,\n  // kept per-provider here for parity with the original per-request payload shape)\n  const slotDemand = {};\n  allPossibleSlots.forEach(s => { slotDemand[s] = 0; });\n  allBookings.forEach(b => { if (b.slot && slotDemand[b.slot] !== undefined) slotDemand[b.slot]++; });\n  const recommendedSlots = Object.entries(slotDemand).sort((a, b) => b[1] - a[1]).slice(0, 3)\n    .map(([slot, count]) => ({ slot, demand_score: count, is_open_today: openSlotsToday.includes(slot) }));\n\n  // Rate suggestion\n  let rateSuggestion;\n  if (earningFairness === 'LOW') {\n    rateSuggestion = { suggested_base_rate: Math.round(platformAvg * 0.85), reason: 'Avg earning significantly below platform average.' };\n  } else if (earningFairness === 'BELOW_AVERAGE') {\n    rateSuggestion = { suggested_base_rate: Math.round(avgEarningPerJob * 1.1) || platformAvg, reason: 'Slightly below platform average.' };\n  } else {\n    rateSuggestion = { suggested_base_rate: null, reason: 'Rate is fair relative to platform average.' };\n  }\n\n  const tips = [\n    utilizationRate < 50 ? `Only ${confirmedToday.length} slots filled today.` : null,\n    earningFairness !== 'FAIR' ? `Avg earning PKR ${avgEarningPerJob} is below platform avg PKR ${platformAvg}.` : null,\n    cancellationStatus !== 'GOOD' ? `Cancellation rate ${(cancellationRate*100).toFixed(0)}% is ${cancellationStatus}.` : null,\n    repeatCustomers.length > 0 ? `${repeatCustomers.length} repeat customer(s) — consider a loyalty discount.` : null\n  ].filter(Boolean);\n\n  results.push({\n    json: {\n      provider_id: myProviderId,\n      provider_name: (myOriginalBookings[0] || reassignedToMe[0] || {}).provider_name || myProviderId,\n      computed_at: now.toISOString(),\n\n      utilization_rate_pct: utilizationRate,\n      workload_status: workloadStatus,\n      slots_open_today: openSlotsToday,\n\n      total_completed_jobs: allMyEarningBookings.length,\n      total_earnings_pkr: totalEarnings,\n      avg_per_job_pkr: avgEarningPerJob,\n      platform_avg_pkr: platformAvg,\n      earning_fairness: earningFairness,\n\n      avg_rating: avgRating,\n      reputation_health: reputationHealth,\n      flagged_bookings: flaggedCount,\n\n      cancellation_rate_pct: Math.round(cancellationRate * 100),\n      cancellation_status: cancellationStatus,\n\n      repeat_customers: repeatCustomers.length,\n      recommended_slots: recommendedSlots,\n      optimization_tips: tips,\n      rate_optimization: rateSuggestion,\n\n      raw: null // filled below after object is built, to embed the full record\n    }\n  });\n}\n\n// Embed the full record as `raw` for dashboard rendering without recomputation\nresults.forEach(r => { r.json.raw = { ...r.json }; });\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ],
+      "id": "3bdfd466-c305-4e04-a233-74334c08bf4a",
+      "name": "Batch Optimization Engine"
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "data"
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        920,
+        300
+      ],
+      "id": "3926a7a7-8998-404d-9bcd-e714537f073a",
+      "name": "Combine Into Array"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://pvtlrmamzjwxoajjkhzg.supabase.co/rest/v1/provider_scores?on_conflict=provider_id",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.data }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1160,
+        300
+      ],
+      "id": "f77b31a5-7686-457b-9fb2-ee6fd47474a5",
+      "name": "Upsert Provider Scores",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Supabase Anon Key"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Nightly Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch All Bookings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch All Bookings": {
+      "main": [
+        [
+          {
+            "node": "Batch Optimization Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch Optimization Engine": {
+      "main": [
+        [
+          {
+            "node": "Combine Into Array",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Into Array": {
+      "main": [
+        [
+          {
+            "node": "Upsert Provider Scores",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "c21b8745-8584-4ba2-a4d0-6fe36eed7b03",
+  "meta": {
+    "instanceId": "khadmat-capstone"
+  },
+  "id": "b407bf5e-cfaf-4fb8-927c-2b1400691c00",
+  "tags": []
+}
