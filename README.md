@@ -12,20 +12,21 @@
 2. [Problem Statement](#2-problem-statement)
 3. [Solution Architecture](#3-solution-architecture)
 4. [Run Locally](#4-run-locally)
-5. [System Orchestration — Frontend Routing to n8n Agent Workflows](#5-system-orchestration--frontend-routing-to-n8n-agent-workflows)
-6. [Workflow Reasoning Traces](#6-workflow-reasoning-traces)
-7. [AI Agent Workflows (n8n)](#7-ai-agent-workflows-n8n)
-8. [Provider Score Refresh (Nightly) — WF8b](#8-provider-score-refresh-nightly--wf8b)
-9. [Provider Dataset Schema](#9-provider-dataset-schema)
-10. [Provider Matching Factors](#10-provider-matching-factors)
-11. [APIs & Tools Used](#11-apis--tools-used)
-12. [Cost & Latency Analysis](#12-cost--latency-analysis)
-13. [Assumptions](#13-assumptions)
-14. [Baseline Comparison](#14-baseline-comparison)
-15. [Privacy & Security Note](#15-privacy--security-note)
-16. [Limitations](#16-limitations)
-17. [Future Improvements](#17-future-improvements)
-18. [Capstone Concept Mapping](#18-capstone-concept-mapping)
+5. [Demo](#5-demo)
+6. [System Orchestration — Frontend Routing to n8n Agent Workflows](#6-system-orchestration--frontend-routing-to-n8n-agent-workflows)
+7. [Workflow Reasoning Traces](#7-workflow-reasoning-traces)
+8. [AI Agent Workflows (n8n)](#8-ai-agent-workflows-n8n)
+9. [Provider Score Refresh (Nightly) — WF8b](#9-provider-score-refresh-nightly--wf8b)
+10. [Provider Dataset Schema](#10-provider-dataset-schema)
+11. [Provider Matching Factors](#11-provider-matching-factors)
+12. [APIs & Tools Used](#12-apis--tools-used)
+13. [Cost & Latency Analysis](#13-cost--latency-analysis)
+14. [Assumptions](#14-assumptions)
+15. [Baseline Comparison](#15-baseline-comparison)
+16. [Privacy & Security Note](#16-privacy--security-note)
+17. [Limitations](#17-limitations)
+18. [Future Improvements](#18-future-improvements)
+19. [Capstone Concept Mapping](#19-capstone-concept-mapping)
 
 ---
 
@@ -92,7 +93,28 @@ The server runs on port 3000 by default. If that port is already in use, free it
 
 ---
 
-## 5. System Orchestration — Frontend Routing to n8n Agent Workflows
+## 5. Demo
+
+A recorded walkthrough (with voice-over) is available at [assets/demo-video.mp4](assets/demo-video.mp4), or watch it directly:
+
+<video src="https://raw.githubusercontent.com/MaryumAkram16/gharfix-capstone/master/assets/demo-video.mp4" controls width="480"></video>
+
+### 5-Minute Demo Path
+
+1. **Open the app** → land on the Home screen with the service grid and chat prompt.
+2. **Make a request** → either type or use voice input. The demo shows a Roman Urdu voice request ("Mere bathroom ka pipe kharab ho gaya hai... Johar Town Lahore") — it's transcribed and parsed live into structured tags: `Plumber · Lahore · Johar Town`.
+3. **Confirm the match** → the assistant surfaces a matched provider (e.g. "Abrar plumber, Verified Pro") with appointment time, location, and an estimated cash-on-service price.
+4. **Track the service** → open **Track Live Service** to watch the booking move through `ON WAY → ARRIVED → DONE`.
+5. **Leave feedback** → rate the completed service (the demo submits 2 stars / "Bad") — a low rating automatically escalates into a dispute.
+6. **File a dispute** → the **Report an Issue** sheet appears with reason options (Provider Never Arrived, Poor Quality of Work, Overcharged, Provider Cancelled, Other); submitting one triggers the dispute-handling workflow.
+7. **See the auto-reschedule** → switch to the provider view ("Your Assignments") to see the booking marked `AUTO-RESCHEDULED`, with a new provider and new booking ID assigned automatically.
+8. **Try another language** → submit a second request in native Urdu script (e.g. "میری گاڑی خراب ہو گئی ہے... Car Mechanic") to see the same intent-extraction pipeline handle a third language.
+
+This single path exercises intent extraction, provider matching, booking, live tracking, feedback/rating, dispute handling, and auto-reschedule — six of the platform's core workflows in one run.
+
+---
+
+## 6. System Orchestration — Frontend Routing to n8n Agent Workflows
 
 There is no separate orchestration layer deciding what happens next at runtime. Each screen in the React frontend calls a specific n8n workflow directly, through one shared proxy route (`server.ts` → `/api/proxy` → `https://{your-n8n-instance}/webhook/{endpoint}`). The frontend's job is to know which workflow to call at which step and what to do with the response; each n8n workflow's job is to do the actual work — extracting intent, scoring providers, checking availability, writing to Supabase, sending email.
 
@@ -141,7 +163,7 @@ Recovery logic (retry, offer alternate dates, escalate, or enroll in waitlist) i
 
 ---
 
-## 6. Workflow Reasoning Traces
+## 7. Workflow Reasoning Traces
 
 Every n8n workflow returns a structured reasoning trace in its JSON response (internally keyed `antigravity_trace` — a legacy field name from the project's original build tooling, kept as-is in the code). It documents why a decision was made and what data it was based on, which is useful both for debugging and for showing the reasoning behind an automated decision (e.g. a refund amount, a provider ranking). Below are three real sample traces from production runs.
 
@@ -214,7 +236,7 @@ Every n8n workflow returns a structured reasoning trace in its JSON response (in
 
 ---
 
-## 7. AI Agent Workflows (n8n)
+## 8. AI Agent Workflows (n8n)
 
 Each n8n workflow is a specialized AI agent, called directly by the frontend for one step in the service lifecycle (see the routing table in section 5).
 
@@ -291,13 +313,13 @@ This workflow gives providers a complete performance dashboard, called live when
 
 ---
 
-## 8. Provider Score Refresh (Nightly) — WF8b
+## 9. Provider Score Refresh (Nightly) — WF8b
 
 WF8b runs on a nightly n8n schedule trigger instead of a live webhook. It fetches all bookings once, computes optimization scores for every provider in a single batch pass (same logic as WF8), and upserts the results into a `provider_scores` Supabase table (schema in `/db/provider_scores.sql`). The provider dashboard can then read a precomputed score instead of recalculating it on every request — this table doubles as the platform's caching layer.
 
 ---
 
-## 9. Provider Dataset Schema
+## 10. Provider Dataset Schema
 
 Each provider entry is built live from Google Places data, enriched with computed fields. The full runtime schema used by WF2 is:
 
@@ -345,7 +367,7 @@ Each provider entry is built live from Google Places data, enriched with compute
 
 ---
 
-## 10. Provider Matching Factors
+## 11. Provider Matching Factors
 
 WF2's scoring engine evaluates all nearby providers across **7 weighted factors**:
 
@@ -371,7 +393,7 @@ A provider offering only basic services scores 25 on specialization for a comple
 
 ---
 
-## 11. APIs & Tools Used
+## 12. APIs & Tools Used
 
 | Tool / API | Role |
 |---|---|
@@ -386,7 +408,7 @@ A provider offering only basic services scores 25 on specialization for a comple
 
 ---
 
-## 12. Cost & Latency Analysis
+## 13. Cost & Latency Analysis
 
 ### Per-Request Latency Breakdown
 
@@ -421,7 +443,7 @@ A provider offering only basic services scores 25 on specialization for a comple
 
 ---
 
-## 13. Assumptions
+## 14. Assumptions
 
 - Users have internet access and a smartphone or web browser.
 - Providers are discoverable via Google Places in major Pakistani cities.
@@ -434,7 +456,7 @@ A provider offering only basic services scores 25 on specialization for a comple
 
 ---
 
-## 14. Baseline Comparison
+## 15. Baseline Comparison
 
 | Capability | Traditional Platforms | GharFix (AI Agent Workflows) |
 |---|---|---|
@@ -452,7 +474,7 @@ A provider offering only basic services scores 25 on specialization for a comple
 
 ---
 
-## 15. Privacy & Security Note
+## 16. Privacy & Security Note
 
 GharFix is designed with privacy-focused principles:
 
@@ -465,7 +487,7 @@ GharFix is designed with privacy-focused principles:
 
 ---
 
-## 16. Limitations
+## 17. Limitations
 
 - **Real-time provider availability** depends on Google Places data, which may not reflect a provider's true operational status.
 - **Rural provider coverage** is limited — Google Places has sparse results outside major cities.
@@ -477,7 +499,7 @@ GharFix is designed with privacy-focused principles:
 
 ---
 
-## 17. Future Improvements
+## 18. Future Improvements
 
 - Real-time provider GPS tracking integrated into the en-route stage.
 - Multilingual voice assistant (Urdu speech-to-text) for hands-free booking.
@@ -490,7 +512,7 @@ GharFix is designed with privacy-focused principles:
 
 ---
 
-## 18. Capstone Concept Mapping
+## 19. Capstone Concept Mapping
 
 | Concept | Where it lives |
 |---|---|
