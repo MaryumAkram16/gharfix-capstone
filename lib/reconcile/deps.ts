@@ -11,6 +11,8 @@ export interface ReconcileDepsOptions {
   email: EmailSender;
   recorder: IncidentRecorder;
   fetch?: FetchLike;
+  /** Override the reserved-domain filter (tests only: their bookings use @example.test). */
+  deliverable?: (email: string) => boolean;
 }
 
 /**
@@ -18,7 +20,7 @@ export interface ReconcileDepsOptions {
  * the email send and the confirmation_sent_at update are not, and failures
  * become incidents/alerts. A missing Supabase config throws (500 + log).
  */
-export function createReconcileRunner({ env, log, email, recorder, fetch }: ReconcileDepsOptions): ReconcileRunner {
+export function createReconcileRunner({ env, log, email, recorder, fetch, deliverable }: ReconcileDepsOptions): ReconcileRunner {
   return async (requestId) => {
     const repo = createSupabaseRepository(supabaseConfigFromEnv(env), { fetch, log });
     const ctx = { workflow: 'reconcile', requestId, recorder };
@@ -26,6 +28,7 @@ export function createReconcileRunner({ env, log, email, recorder, fetch }: Reco
       db: resilientRepository(repo, ctx),
       email: resilientEmail(email, ctx, EMAIL_WAIT_MS),
       emailTimeoutMs: EMAIL_WAIT_MS + 500,
+      deliverable,
       now: () => new Date(),
       log: log.child({ request_id: requestId }),
     });

@@ -4,7 +4,8 @@ import type { EmailMessage } from '../../lib/email/types';
 import type { LogRecord } from '../../lib/log';
 
 // app.reconcile with the real repository, resilience and recorder; only HTTP
-// (PostgREST) and the mailer are fake.
+// (PostgREST) and the mailer are fake. Bookings use @example.test, so the
+// reserved-domain filter is lifted with reconcileDeliverable (it has its own tests).
 
 const env = {
   SUPABASE_URL: 'https://project.supabase.test',
@@ -41,7 +42,7 @@ function fakePostgrest(bookings: Row[], { failFirstRead = false } = {}) {
 }
 
 const due = (id: string): Row => ({
-  booking_id: id, status: 'confirmed', user_name: 'Customer', user_email: 'customer@gmail.com', service_type: 'plumber',
+  booking_id: id, status: 'confirmed', user_name: 'Customer', user_email: 'customer@example.test', service_type: 'plumber',
   provider_id: 'osm:node/1', provider_name: 'Ali Plumbing', location: 'G-13, Islamabad', slot: '16:00',
   booking_date: '2026-11-10', price_pkr: 900, created_at: new Date(Date.now() - 30 * 60_000).toISOString(),
 });
@@ -52,20 +53,28 @@ function mailer(fail = false) {
 }
 
 describe('app.reconcile', () => {
+  it('never mails @example.test bookings without the test override (default filter)', async () => {
+    const pg = fakePostgrest([due('BK-TEST-R0')]);
+    const mail = mailer();
+    const app = createApp({ env, fetch: pg.fetch, email: mail, logSink: () => {} });
+    expect(await app.reconcile(null)).toEqual({ found: 0, fixed: 0, failed: 0, skipped: 1, deferred: 0 });
+    expect(mail.sent).toEqual([]);
+  });
+
   it('re-sends, marks the booking, and a repeat run does nothing', async () => {
     const pg = fakePostgrest([due('BK-TEST-R1')]);
     const mail = mailer();
-    const app = createApp({ env, fetch: pg.fetch, email: mail, logSink: () => {} });
+    const app = createApp({ env, fetch: pg.fetch, email: mail, logSink: () => {}, reconcileDeliverable: () => true });
 
     expect(await app.reconcile('req-r1')).toEqual({ found: 1, fixed: 1, failed: 0, skipped: 0, deferred: 0 });
     expect(await app.reconcile('req-r2')).toEqual({ found: 0, fixed: 0, failed: 0, skipped: 0, deferred: 0 });
-    expect(mail.sent.map((m) => m.to)).toEqual(['customer@gmail.com']);
+    expect(mail.sent.map((m) => m.to)).toEqual(['customer@example.test']);
     expect(pg.calls.filter((c) => c === 'PATCH bookings')).toHaveLength(1);
   });
 
   it('retries the bookings read (auto_fixed incident), never the send', async () => {
     const pg = fakePostgrest([due('BK-TEST-R2')], { failFirstRead: true });
-    const app = createApp({ env, fetch: pg.fetch, email: mailer(), logSink: () => {} });
+    const app = createApp({ env, fetch: pg.fetch, email: mailer(), logSink: () => {}, reconcileDeliverable: () => true });
     expect(await app.reconcile(null)).toMatchObject({ fixed: 1 });
     expect(pg.incidents).toEqual([expect.objectContaining({ workflow: 'reconcile', step: 'supabase.findUnconfirmed', auto_fixed: true })]);
   });
@@ -75,7 +84,7 @@ describe('app.reconcile', () => {
     const pg = fakePostgrest(bookings);
     const mail = mailer(true);
     const logs: LogRecord[] = [];
-    const app = createApp({ env, fetch: pg.fetch, email: mail, logSink: (r) => logs.push(r) });
+    const app = createApp({ env, fetch: pg.fetch, email: mail, logSink: (r) => logs.push(r), reconcileDeliverable: () => true });
 
     expect(await app.reconcile('req-r3')).toMatchObject({ found: 2, fixed: 0, failed: 2 });
     expect(pg.incidents).toEqual([
@@ -86,6 +95,6 @@ describe('app.reconcile', () => {
     expect(alerts).toHaveLength(1); // two failures, one alert
     expect(alerts[0].text).toMatch(/What you need to do: The email could not be sent/);
     expect(bookings.every((b) => !b.confirmation_sent_at)).toBe(true);
-    expect(JSON.stringify(logs)).not.toContain('customer@gmail.com');
+    expect(JSON.stringify(logs)).not.toContain('customer@example.test');
   });
 });

@@ -18,6 +18,8 @@ export interface AppOptions {
   fetch?: FetchLike;
   email?: EmailSender;
   logSink?: LogSink;
+  /** Tests only: let the reconciler mail @example.test bookings. */
+  reconcileDeliverable?: (email: string) => boolean;
 }
 
 export interface App {
@@ -29,7 +31,7 @@ export interface App {
   reconcile: ReconcileRunner;
 }
 
-export function createApp({ env = process.env, fetch, email, logSink }: AppOptions = {}): App {
+export function createApp({ env = process.env, fetch, email, logSink, reconcileDeliverable }: AppOptions = {}): App {
   const log = createLogger({ app: 'gharfix' }, logSink);
   // One sender for confirmations and alerts (Gmail, or the console fallback).
   const mailer = email ?? emailSenderFromEnv(env, log.child({ fn: 'email' }));
@@ -41,7 +43,7 @@ export function createApp({ env = process.env, fetch, email, logSink }: AppOptio
   const forward = n8nBase ? createN8nForwarder({ baseUrl: n8nBase, fetch, log: log.child({ fn: 'proxy' }) }) : null;
 
   const local = { 'khadmat-booking': booking, 'khadmat-intent': intent, 'khadmat-provider-match': providerMatch };
-  const reconcile = createReconcileRunner({ env, fetch, email: mailer, recorder, log: log.child({ fn: 'reconcile' }) });
+  const reconcile = createReconcileRunner({ env, fetch, email: mailer, recorder, deliverable: reconcileDeliverable, log: log.child({ fn: 'reconcile' }) });
   return {
     booking,
     intent,
