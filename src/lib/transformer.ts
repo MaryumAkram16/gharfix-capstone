@@ -54,7 +54,11 @@ export interface MatchViewData {
   alternative_cards: ProviderCardData[];
   nearby_areas?: string[]; // Nearby area suggestions for no-match fallback
   no_match_reason?: string; // Reason why no providers found
+  /** True when the providers are fictional demo data (data_source "demo_seed"). The UI must label them. */
+  is_demo: boolean;
 }
+
+export const DEMO_BADGE = 'Demo data';
 
 // ── NEARBY AREAS DATABASE ──
 // Maps each area to nearby alternatives (for graceful no-match fallback)
@@ -164,7 +168,8 @@ export function transformMatchData(backendResponse: any): MatchViewData {
       header: { service: 'N/A', location: 'N/A', providers_found: 0 },
       pricing_card: { title: 'N/A', total: 0, currency: 'PKR', breakdown: [], badges: [] },
       top_provider_card: null,
-      alternative_cards: []
+      alternative_cards: [],
+      is_demo: false,
     };
   }
 
@@ -188,6 +193,9 @@ export function transformMatchData(backendResponse: any): MatchViewData {
   if (raw.matching_result) raw = raw.matching_result;
   if (raw.data && typeof raw.data === 'object' && !Array.isArray(raw.data)) raw = raw.data;
   if (raw.body && typeof raw.body === 'object' && !Array.isArray(raw.body)) raw = raw.body;
+
+  // Read before the WF3 flattening below drops it.
+  const isDemo = raw.data_source === 'demo_seed';
 
   // ── WF3 multi-service shape ──────────────────────────────────────────────
   // WF3 returns: { status, workflow, services: [{ service, provider, alternatives, pricing }], summary }
@@ -273,7 +281,7 @@ export function transformMatchData(backendResponse: any): MatchViewData {
     location: p.coordinates
       ? { lat: p.coordinates.lat, lng: p.coordinates.lng, address: p.address || '' }
       : (p.location || { lat: 0, lng: 0, address: '' }),
-    badges: Array.isArray(p.badges) ? p.badges : [],
+    badges: [...(p.source === 'demo_seed' ? [DEMO_BADGE] : []), ...(Array.isArray(p.badges) ? p.badges : [])],
     cta: 'Select Provider',
     availability_slots: Array.isArray(p.availability_slots) ? p.availability_slots : [],
   });
@@ -322,6 +330,10 @@ export function transformMatchData(backendResponse: any): MatchViewData {
     if (!topProvider.badges.includes('Best Match')) topProvider.badges.unshift('Best Match');
     decorateBadges(topProvider);
   }
+  // "Demo data" always comes first, so it is never hidden behind other badges.
+  for (const card of [topProvider, ...alternativeCards]) {
+    if (card && card.badges.includes(DEMO_BADGE)) card.badges = [DEMO_BADGE, ...card.badges.filter((b) => b !== DEMO_BADGE)];
+  }
 
   alternativeCards.forEach((alt) => decorateBadges(alt));
 
@@ -350,5 +362,6 @@ export function transformMatchData(backendResponse: any): MatchViewData {
     alternative_cards: alternativeCards.sort((a, b) => b.computed_score - a.computed_score),
     nearby_areas: nearbyAreas,
     no_match_reason: noMatchReason,
+    is_demo: isDemo,
   };
 }

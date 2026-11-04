@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { build } from 'esbuild';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -38,6 +38,9 @@ describe('api/ in plain Node ESM', () => {
     });
     mkdirSync(out, { recursive: true });
     writeFileSync(join(out, 'package.json'), JSON.stringify({ type: 'module' }));
+    // Data files imported by lib/ must ship next to it (Vercel traces the static import).
+    mkdirSync(join(out, 'db', 'seed'), { recursive: true });
+    copyFileSync(join(root, 'db', 'seed', 'demo_providers.json'), join(out, 'db', 'seed', 'demo_providers.json'));
 
     const script = `
       const call = async (file, body) => {
@@ -50,7 +53,9 @@ describe('api/ in plain Node ESM', () => {
       // No network needed: no Gemini key (keyword parser), and no services means no map lookup.
       const intent = await call('intent.js', { raw_message: 'hello' });
       const match = await call('provider-match.js', { location: 'G-13' });
-      console.log(JSON.stringify({ proxy, booking, intent, match }));
+      const { loadDemoDataset } = await import(${JSON.stringify(out)} + '/lib/matching/demo.js');
+      const demo = (await loadDemoDataset()).providers.length;
+      console.log(JSON.stringify({ proxy, booking, intent, match, demo }));
     `;
     const env = Object.fromEntries(
       Object.entries(process.env).filter(([k]) => !k.startsWith('SUPABASE_') && !k.startsWith('N8N_') && !k.startsWith('GMAIL_') && !k.startsWith('GEMINI_')),
@@ -67,5 +72,7 @@ describe('api/ in plain Node ESM', () => {
     expect(result.intent[0]).toBe(200);
     expect(result.intent[1]).toMatchObject({ status: 'clarification_needed', intent_source: 'keyword_fallback' });
     expect(result.match).toEqual([200, expect.objectContaining({ status: 'error', message: 'No services found in match result' })]);
+    // The demo seed loads through a JSON import attribute in plain Node ESM.
+    expect(result.demo).toBeGreaterThanOrEqual(16);
   }, 30_000);
 });

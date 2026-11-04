@@ -51,6 +51,9 @@ export const OSM_DATA_GAPS = [
   'photos',
 ] as const;
 
+/** Demo providers lack the same fields, and are not real businesses at all. */
+export const DEMO_DATA_GAPS = ['not a real business (demo data from db/seed/demo_providers.json)', ...OSM_DATA_GAPS] as const;
+
 /** Great-circle distance in km. */
 export function haversineKm(a: GeoPoint, b: GeoPoint): number {
   const R = 6371;
@@ -68,6 +71,7 @@ export interface ProviderContext {
 }
 
 export function toProvider(place: Place, { request, center, activeBookings }: ProviderContext): Provider {
+  const isDemo = place.source === 'demo_seed';
   const distanceKm = parseFloat(haversineKm(center, { lat: place.lat, lng: place.lng }).toFixed(1));
 
   // Real active bookings today from Supabase, as in n8n.
@@ -106,11 +110,12 @@ export function toProvider(place: Place, { request, center, activeBookings }: Pr
     distance_type: 'straight_line',
     verified: false,
     reputation_score: null,
-    google_maps_url: `https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lng}`,
-    osm_url: place.sourceUrl,
+    // A demo provider's coordinates are only near a real area centre: no map link that would point at a real address.
+    google_maps_url: isDemo ? '' : `https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lng}`,
+    osm_url: isDemo ? '' : place.sourceUrl,
     place_id: place.id,
     photos: [],
-    source: 'openstreetmap',
-    data_gaps: [...OSM_DATA_GAPS],
+    source: place.source,
+    data_gaps: isDemo ? [...DEMO_DATA_GAPS] : [...OSM_DATA_GAPS],
   };
 }

@@ -137,6 +137,7 @@ export function createOverpassDirectory(url = DEFAULT_OVERPASS_URL, opts: OsmOpt
         places.push({
           id, name, lat, lng, address: address(tags), matchedServices,
           sourceUrl: `https://www.openstreetmap.org/${el.type}/${el.id}`,
+          source: 'openstreetmap',
           d: haversineKm(center, { lat, lng }),
         });
       }

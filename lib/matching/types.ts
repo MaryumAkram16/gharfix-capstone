@@ -31,7 +31,11 @@ export interface Place {
   /** Requested services this place matched (by OSM tag or name). */
   matchedServices: string[];
   sourceUrl: string;
+  /** Where the place came from. "demo_seed" places are fictional (db/seed/demo_providers.json). */
+  source: ProviderSource;
 }
+
+export type ProviderSource = 'openstreetmap' | 'demo_seed';
 
 /**
  * The provider schema WF2 produced and the frontend reads. Values the data
@@ -68,6 +72,6 @@ export interface Provider {
   osm_url: string;
   place_id: string;
   photos: string[];
-  source: 'openstreetmap';
+  source: ProviderSource;
   data_gaps: string[];
 }

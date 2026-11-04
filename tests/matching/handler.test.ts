@@ -10,7 +10,7 @@ const AFTERNOON = new Date('2026-11-04T09:00:00Z');
 const G13: GeocodeResult = { lat: 33.6557, lng: 73.0138, formatted_address: 'G-13, Islamabad, Pakistan', source: 'openstreetmap_nominatim' };
 
 const place = (id: string, lat: number, lng: number, matchedServices: string[]): Place => ({
-  id, name: `Provider ${id}`, lat, lng, address: '', matchedServices, sourceUrl: `https://www.openstreetmap.org/${id.slice(4)}`,
+  id, name: `Provider ${id}`, lat, lng, address: '', matchedServices, sourceUrl: `https://www.openstreetmap.org/${id.slice(4)}`, source: 'openstreetmap',
 });
 
 let deps: MatchDeps & { log: ReturnType<typeof memoryLogger>; searches: NearbySearch[]; geocoded: string[]; capacityCalls: Array<[string, string[]]> };
@@ -59,9 +59,10 @@ describe('khadmat-provider-match: success', () => {
       display: 'plumber: PKR 910 (Base: 900 + Complexity: 0 + Surge: 0 + Distance: 10)',
     });
 
-    expect(body.data_source).toMatchObject({ providers: 'openstreetmap', geocoder: 'openstreetmap_nominatim', distance: 'straight_line', capacity_checked: true });
-    expect(body.data_source.not_available).toEqual(expect.arrayContaining(['rating', 'review_count']));
-    expect(body.data_source.note).toMatch(/no ratings, reviews/);
+    expect(body.data_source).toBe('openstreetmap');
+    expect(body.data_notes).toMatchObject({ geocoder: 'openstreetmap_nominatim', distance: 'straight_line', capacity_checked: true });
+    expect(body.data_notes.not_available).toEqual(expect.arrayContaining(['rating', 'review_count']));
+    expect(body.data_notes.note).toMatch(/no ratings, reviews/);
 
     expect(deps.searches).toEqual([{ services: ['plumber'], center: { lat: 33.6557, lng: 73.0138 }, radiusM: 5000, limit: 20 }]);
     expect(deps.capacityCalls).toEqual([['2026-11-04', ['osm:node/1', 'osm:node/2', 'osm:way/3']]]);
@@ -118,7 +119,7 @@ describe('khadmat-provider-match: no match paths', () => {
   it('uses the n8n sector table when the geocoder finds nothing, but never defaults to Islamabad', async () => {
     geoResult = null;
     const res = await handleProviderMatch(single, deps);
-    expect((res.body as any).data_source.geocoder).toBe('area_name_fallback');
+    expect((res.body as any).data_notes.geocoder).toBe('area_name_fallback');
     expect(deps.searches[0].center).toEqual({ lat: 33.6557, lng: 73.0138 });
 
     const karachi = await handleProviderMatch({ ...single, location: 'Clifton, Karachi' }, deps);
@@ -153,7 +154,7 @@ describe('khadmat-provider-match: failures', () => {
     counts = new RepositoryError('unavailable', 'Supabase GET network error');
     const res = await handleProviderMatch(single, deps);
     expect(res.status).toBe(200);
-    expect((res.body as any).data_source.capacity_checked).toBe(false);
+    expect((res.body as any).data_notes.capacity_checked).toBe(false);
     expect(deps.log.records.map((r) => r.event)).toContain('match.capacity_unavailable');
   });
 

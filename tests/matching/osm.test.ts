@@ -134,11 +134,11 @@ describe('Overpass directory', () => {
     expect(places).toEqual([
       {
         id: 'osm:way/2', name: 'Near Electric & Sanitary', lat: 33.657, lng: 73.015, address: 'Main Road, Islamabad',
-        matchedServices: ['plumber', 'electrician'], sourceUrl: 'https://www.openstreetmap.org/way/2',
+        matchedServices: ['plumber', 'electrician'], sourceUrl: 'https://www.openstreetmap.org/way/2', source: 'openstreetmap',
       },
       {
         id: 'osm:node/3', name: 'Far Plumbing', lat: 33.7, lng: 73.05, address: '',
-        matchedServices: ['plumber'], sourceUrl: 'https://www.openstreetmap.org/node/3',
+        matchedServices: ['plumber'], sourceUrl: 'https://www.openstreetmap.org/node/3', source: 'openstreetmap',
       },
     ]);
   });

@@ -27,3 +27,25 @@ describe('transformMatchData ratings', () => {
     expect(transformMatchData(wf3({ id: 'p', name: 'P', rating: 0, review_count: 0 })).top_provider_card).toMatchObject({ rating: 0, reviews: 0 });
   });
 });
+
+describe('transformMatchData demo labelling', () => {
+  const demoBody = () => {
+    const body = wf3({ id: 'demo:isb-g13-home', name: '[DEMO] G-13 Home Repairs', rating: null, review_count: null, distance_km: 0.3, source: 'demo_seed', verified: false });
+    (body.matching_result as Record<string, unknown>).data_source = 'demo_seed';
+    return body;
+  };
+
+  it('flags the page and puts "Demo data" first on demo cards', () => {
+    const ui = transformMatchData(demoBody());
+    expect(ui.is_demo).toBe(true);
+    expect(ui.top_provider_card!.badges).toEqual(['Demo data', 'Best Match', 'Nearby']);
+  });
+
+  it('is off for OpenStreetMap results and old responses without data_source', () => {
+    const osm = wf3({ id: 'osm:node/1', name: 'Real', distance_km: 1, source: 'openstreetmap' });
+    (osm.matching_result as Record<string, unknown>).data_source = 'openstreetmap';
+    expect(transformMatchData(osm).is_demo).toBe(false);
+    expect(transformMatchData(wf3({ id: 'ChIJ-x', name: 'Old', rating: 4.2 })).is_demo).toBe(false);
+    expect(transformMatchData(null).is_demo).toBe(false);
+  });
+});

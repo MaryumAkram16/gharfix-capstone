@@ -60,7 +60,7 @@ describe('khadmat-intent through /api/proxy', () => {
     expect(res.status).toBe(200);
     const body = res.body as any;
     expect(body).toMatchObject({ status: 'success', stage: 'booking_ready', intent_source: 'gemini' });
-    expect(body.matching_result).toMatchObject({ status: 'success', workflow: 'WF3-Pricing', data_source: { providers: 'openstreetmap', capacity_checked: true } });
+    expect(body.matching_result).toMatchObject({ status: 'success', workflow: 'WF3-Pricing', data_source: 'openstreetmap', data_notes: { capacity_checked: true } });
     expect(net.hosts).toEqual(['generativelanguage.googleapis.com', 'nominatim.openstreetmap.org', 'overpass-api.de', 'project.supabase.test']);
 
     const top = body.matching_result.services[0].provider;
@@ -101,7 +101,7 @@ describe('khadmat-intent through /api/proxy', () => {
     const net = fakeInternet();
     const res = await createApp({ env: { GEMINI_API_KEY: FAKE_GEMINI_KEY }, fetch: net.fetch, logSink: () => {} })
       .proxy({ endpoint: 'khadmat-provider-match', ...intent }, { requestId: null });
-    expect((res.body as any).data_source.capacity_checked).toBe(false);
+    expect((res.body as any).data_notes.capacity_checked).toBe(false);
     expect(net.hosts).not.toContain('project.supabase.test');
   });
 });

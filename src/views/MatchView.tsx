@@ -1,7 +1,7 @@
 import { motion } from 'motion/react';
 import { Star, MapPin, CheckCircle2, Clock, Info, ArrowRight, ShieldCheck, TrendingUp, Sparkles, Hash, BadgeCheck, Award } from 'lucide-react';
 import { useState } from 'react';
-import { transformMatchData, MatchViewData, ProviderCardData } from '../lib/transformer';
+import { transformMatchData, MatchViewData, ProviderCardData, DEMO_BADGE } from '../lib/transformer';
 import { BookingPayload } from './BookingView';
 import { AppLanguage } from '../App';
 import { getUserProfile } from '../lib/profile';
@@ -34,6 +34,7 @@ function ProviderCard({ provider, isSelectedSlot, onSelectSlot, onBook, isTopMat
       pickTime: "Pick a Time Slot", book: "Book This Provider",
       providerIdLabel: "Provider ID",
       noRatings: "No ratings or reviews yet (OpenStreetMap listing)", straightLine: "straight line",
+      demoNoRatings: "Demo data: sample provider, not a real business",
     },
     urdu: {
       reviews: "تبصرے", score: "اسکور", startsFrom: "شروع سے",
@@ -41,6 +42,7 @@ function ProviderCard({ provider, isSelectedSlot, onSelectSlot, onBook, isTopMat
       pickTime: "وقت کا انتخاب کریں", book: "یہ فراہم کنندہ بک کریں",
       providerIdLabel: "پرووائیڈر آئی ڈی",
       noRatings: "ابھی کوئی ریٹنگ یا تبصرہ نہیں (اوپن اسٹریٹ میپ)", straightLine: "سیدھی لکیر",
+      demoNoRatings: "ڈیمو ڈیٹا: نمونہ فراہم کنندہ، حقیقی کاروبار نہیں",
     },
     roman_urdu: {
       reviews: "reviews", score: "Score", startsFrom: "Starts From",
@@ -48,6 +50,7 @@ function ProviderCard({ provider, isSelectedSlot, onSelectSlot, onBook, isTopMat
       pickTime: "Pick a Time Slot", book: "Book This Provider",
       providerIdLabel: "Provider ID",
       noRatings: "Abhi koi rating ya review nahi (OpenStreetMap listing)", straightLine: "seedhi line",
+      demoNoRatings: "Demo data: sample provider, asli business nahi",
     },
   }[appLanguage];
 
@@ -63,7 +66,7 @@ function ProviderCard({ provider, isSelectedSlot, onSelectSlot, onBook, isTopMat
         <div className="flex gap-4 flex-1 min-w-0">
           <div className={`w-16 h-16 rounded-2xl flex items-center justify-center relative shadow-inner shrink-0 ${isTopMatch ? 'bg-primary/10' : 'bg-surface-container-high'}`}>
             <span className={`text-2xl font-black ${isTopMatch ? 'text-primary' : 'text-on-surface-variant'}`}>
-              {provider.name.charAt(0)}
+              {provider.name.replace(/^\[DEMO\]\s*/, '').charAt(0)}
             </span>
             {provider.verified && (
               <div className="absolute -bottom-1 -right-1 bg-white p-0.5 rounded-full shadow-md">
@@ -108,7 +111,7 @@ function ProviderCard({ provider, isSelectedSlot, onSelectSlot, onBook, isTopMat
               // OpenStreetMap has no ratings or reviews: say so instead of showing 0 stars.
               <div className="flex items-center gap-1">
                 <Star className="w-3.5 h-3.5 text-outline" />
-                <span className="text-[10px] text-on-surface-variant font-medium">{translations.noRatings}</span>
+                <span className="text-[10px] text-on-surface-variant font-medium">{provider.source === 'demo_seed' ? translations.demoNoRatings : translations.noRatings}</span>
               </div>
             )}
             <p className="text-[10px] text-outline mt-0.5 font-medium">
@@ -233,7 +236,7 @@ function ProviderCard({ provider, isSelectedSlot, onSelectSlot, onBook, isTopMat
       {provider.badges.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-4">
           {provider.badges.map((badge, i) => (
-            <span key={i} className={`text-[9px] font-bold px-3 py-1 rounded-full uppercase ${isTopMatch ? 'bg-primary/10 text-primary' : 'bg-outline-variant/10 text-on-surface-variant'}`}>
+            <span key={i} className={`text-[9px] font-bold px-3 py-1 rounded-full uppercase ${badge === DEMO_BADGE ? 'bg-amber-100 text-amber-800 border border-amber-300' : isTopMatch ? 'bg-primary/10 text-primary' : 'bg-outline-variant/10 text-on-surface-variant'}`}>
               {badge}
             </span>
           ))}
@@ -298,6 +301,7 @@ export function MatchView({ data, onBook, appLanguage, onSearchAgain }: MatchVie
       disclaimer: "Final price may vary slightly based on actual work required.",
       topRated: "Best Match", alternative: "Alternative Providers",
       secure: "Secure Booking · Protected by KhidmatGaar",
+      demoTitle: "Demo data.", demoText: "No OpenStreetMap listings were found nearby, so these are sample providers, not real businesses.",
       showMore: "Show More Providers", showLess: "Show Less Providers",
       changeSearch: "Search Again",
     },
@@ -312,6 +316,7 @@ export function MatchView({ data, onBook, appLanguage, onSearchAgain }: MatchVie
       disclaimer: "کام کی نوعیت کے مطابق حتمی قیمت تھوڑی تبدیل ہو سکتی ہے۔",
       topRated: "بہترین انتخاب", alternative: "دیگر فراہم کنندگان",
       secure: "محفوظ بکنگ بذریعہ خدمت گار",
+      demoTitle: "ڈیمو ڈیٹا۔", demoText: "قریب کوئی اوپن اسٹریٹ میپ لسٹنگ نہیں ملی، اس لیے یہ نمونہ فراہم کنندگان ہیں، حقیقی کاروبار نہیں۔",
       showMore: "مزید فراہم کنندگان", showLess: "کم فراہم کنندگان",
       changeSearch: "دوبارہ تلاش کریں",
     },
@@ -326,6 +331,7 @@ export function MatchView({ data, onBook, appLanguage, onSearchAgain }: MatchVie
       disclaimer: "Final price may vary slightly based on actual work required.",
       topRated: "Best Match", alternative: "Alternative Providers",
       secure: "Secure Booking · Protected by KhidmatGaar",
+      demoTitle: "Demo data.", demoText: "No OpenStreetMap listings were found nearby, so these are sample providers, not real businesses.",
       showMore: "Show More Providers", showLess: "Show Less Providers",
       changeSearch: "Search Again",
     },
@@ -337,7 +343,7 @@ export function MatchView({ data, onBook, appLanguage, onSearchAgain }: MatchVie
         status: 'loading', stage: 'searching', location: 'Detecting...', service_type: 'Service',
         header: { service: 'Searching...', location: '...', providers_found: 0 },
         pricing_card: { title: t.estimate, total: 0, currency: 'PKR', breakdown: [], badges: [] },
-        top_provider_card: null, alternative_cards: [],
+        top_provider_card: null, alternative_cards: [], is_demo: false,
       };
 
   const handleSelectSlot = (providerName: string, slot: string) => {
@@ -498,6 +504,15 @@ export function MatchView({ data, onBook, appLanguage, onSearchAgain }: MatchVie
           <ShieldCheck className="w-3 h-3" /> {t.secure}
         </p>
       </div>
+
+      {uiData.is_demo && (
+        <div role="note" data-testid="demo-data-banner" className="flex items-start gap-3 bg-amber-50 border border-amber-300 text-amber-900 rounded-2xl px-4 py-3">
+          <Info className="w-4 h-4 mt-0.5 shrink-0" />
+          <p className="text-xs leading-relaxed">
+            <span className="font-black uppercase tracking-wide">{t.demoTitle}</span> {t.demoText}
+          </p>
+        </div>
+      )}
 
       {/* Pricing Card */}
       {uiData.pricing_card.total > 0 && (

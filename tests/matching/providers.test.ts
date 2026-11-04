@@ -9,7 +9,7 @@ const request: MatchRequest = {
 const center = { lat: 33.6557, lng: 73.0138 };
 const place: Place = {
   id: 'osm:node/111', name: 'Ali Plumbing Works', lat: 33.6600, lng: 73.0200,
-  address: 'Street 5, G-13/1', matchedServices: ['plumber'], sourceUrl: 'https://www.openstreetmap.org/node/111',
+  address: 'Street 5, G-13/1', matchedServices: ['plumber'], sourceUrl: 'https://www.openstreetmap.org/node/111', source: 'openstreetmap',
 };
 
 describe('haversineKm', () => {
