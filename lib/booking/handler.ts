@@ -1,16 +1,16 @@
 import { createHash, randomInt } from 'node:crypto';
-import { fail, internalError, ok, serviceUnavailable, validationError, type HttpResult } from '../http/errors';
-import type { Logger } from '../log';
-import { buildReceipt, confirmationEmail, type EmailMessage, type Receipt } from './receipt';
+import { fail, internalError, ok, serviceUnavailable, validationError, type HttpResult } from '../http/errors.js';
+import type { Logger } from '../log.js';
+import { buildReceipt, confirmationEmail, type EmailMessage, type Receipt } from './receipt.js';
 import {
   BookingConflictError, RepositoryError, type BookingRepository, type BookingRow, type NewBooking,
-} from './repository';
+} from './repository.js';
 import {
   addDays, alternativeDates, buildSlotList, findConflict, pakistanDate, serviceBlock,
   type AlternativeDate, type ServiceBlock,
-} from './schedule';
-import { normaliseSlot } from './slot';
-import { validateConfirm, validateGetSlots, type ConfirmRequest, type Validated } from './validate';
+} from './schedule.js';
+import { normaliseSlot } from './slot.js';
+import { validateConfirm, validateGetSlots, type ConfirmRequest, type Validated } from './validate.js';
 
 // khadmat-booking (WF4) without n8n: get_slots and confirm.
 // Everything with side effects comes in through BookingDeps.

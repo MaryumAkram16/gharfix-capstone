@@ -1,5 +1,5 @@
-import { DEFAULT_SLOTS } from './schedule';
-import { normaliseSlot } from './slot';
+import { DEFAULT_SLOTS } from './schedule.js';
+import { normaliseSlot } from './slot.js';
 
 export type Validated<T> =
   | { ok: true; value: T }

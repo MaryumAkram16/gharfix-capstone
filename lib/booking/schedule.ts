@@ -1,4 +1,4 @@
-import { slotLabel, slotToMinutes } from './slot';
+import { slotLabel, slotToMinutes } from './slot.js';
 
 // Job time per service (minutes), carried over unchanged from WF4.
 const SERVICE_DURATIONS: Record<string, number> = {

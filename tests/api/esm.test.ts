@@ -1,0 +1,64 @@
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { build } from 'esbuild';
+import { afterAll, describe, expect, it } from 'vitest';
+
+// Vercel compiles each api/*.ts to ESM (package.json has "type": "module")
+// without bundling, and Node's ESM loader needs real file extensions.
+// Vitest resolves './slot' happily, so it cannot catch a missing '.js'.
+// This test transpiles api/ and lib/ file by file, then imports the
+// functions in a plain Node process and calls them.
+
+const root = resolve(__dirname, '../..');
+// Inside the project so bare imports (e.g. nodemailer) resolve from node_modules.
+const out = join(root, 'node_modules', '.cache', `esm-smoke-${process.pid}`);
+
+function tsFiles(dir: string): string[] {
+  return (readdirSync(join(root, dir), { recursive: true }) as string[])
+    .filter((f) => f.endsWith('.ts'))
+    .map((f) => join(dir, f));
+}
+
+afterAll(() => rmSync(out, { recursive: true, force: true }));
+
+describe('api/ in plain Node ESM', () => {
+  it('imports and answers requests without a bundler', async () => {
+    await build({
+      absWorkingDir: root,
+      entryPoints: [...tsFiles('api'), ...tsFiles('lib')],
+      outdir: out,
+      outbase: '.',
+      bundle: false,
+      format: 'esm',
+      platform: 'node',
+      target: 'node20',
+      logLevel: 'silent',
+    });
+    mkdirSync(out, { recursive: true });
+    writeFileSync(join(out, 'package.json'), JSON.stringify({ type: 'module' }));
+
+    const script = `
+      const call = async (file, body) => {
+        const { POST } = await import(${JSON.stringify(out)} + '/api/' + file);
+        const res = await POST(new Request('https://gharfix.test/api/' + file, { method: 'POST', body: JSON.stringify(body) }));
+        return [res.status, await res.json()];
+      };
+      const proxy = await call('proxy.js', { endpoint: 'khadmat-nope' });
+      const booking = await call('booking.js', { action: 'confirm' });
+      console.log(JSON.stringify({ proxy, booking }));
+    `;
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(([k]) => !k.startsWith('SUPABASE_') && !k.startsWith('N8N_') && !k.startsWith('GMAIL_')),
+    );
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env });
+
+    expect(child.stderr).not.toContain('ERR_MODULE_NOT_FOUND');
+    expect(child.status).toBe(0);
+    const result = JSON.parse(child.stdout.trim().split('\n').pop()!);
+    expect(result.proxy).toEqual([400, { status: 'validation_error', message: 'Unknown endpoint', fields: ['endpoint'] }]);
+    // No Supabase env in the child: a logged config error and a generic 500.
+    expect(result.booking).toEqual([500, { status: 'internal_error', message: 'Something went wrong. Please try again.' }]);
+    expect(child.stderr).toContain('booking.config_error');
+  }, 30_000);
+});

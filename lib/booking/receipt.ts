@@ -1,4 +1,4 @@
-import { slotLabel } from './slot';
+import { slotLabel } from './slot.js';
 
 // The confirmation receipt and email, field for field as WF4 "Generate
 // Receipt" and the Gmail node built them. The frontend stores this receipt

@@ -12,6 +12,7 @@ describe('http results', () => {
   it('maps each error code to its HTTP status', () => {
     expect(STATUS_FOR).toEqual({
       validation_error: 400,
+      payload_too_large: 413,
       slot_taken: 409,
       idempotency_key_reused: 422,
       service_unavailable: 503,

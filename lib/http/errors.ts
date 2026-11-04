@@ -12,6 +12,7 @@ export interface HttpResult<B = Record<string, unknown>> {
 
 export type ErrorCode =
   | 'validation_error'
+  | 'payload_too_large'
   | 'slot_taken'
   | 'idempotency_key_reused'
   | 'service_unavailable'
@@ -20,6 +21,7 @@ export type ErrorCode =
 /** One place that decides the HTTP status code for each error. */
 export const STATUS_FOR: Record<ErrorCode, number> = {
   validation_error: 400,
+  payload_too_large: 413,
   slot_taken: 409,
   idempotency_key_reused: 422,
   service_unavailable: 503,

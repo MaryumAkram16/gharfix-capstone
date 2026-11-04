@@ -1,5 +1,5 @@
-import type { Logger } from '../log';
-import { normaliseSlot } from './slot';
+import type { Logger } from '../log.js';
+import { normaliseSlot } from './slot.js';
 
 // Bookings in Supabase over PostgREST, with plain fetch. Query strings are
 // built with URLSearchParams and bodies with JSON.stringify, so user text is
