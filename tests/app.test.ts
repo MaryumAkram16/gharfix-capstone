@@ -93,12 +93,12 @@ describe('createApp', () => {
     const fetchImpl = async (input: string) => { seen.push(input); return Response.json({ status: 'success' }); };
 
     const withoutN8n = createApp({ env, fetch: fetchImpl, logSink: () => {} });
-    expect((await withoutN8n.proxy({ endpoint: 'khadmat-intent' }, { requestId: null })).status).toBe(503);
+    expect((await withoutN8n.proxy({ endpoint: 'khadmat-dispute' }, { requestId: null })).status).toBe(503);
     expect(seen).toEqual([]);
 
     const withN8n = createApp({ env: { ...env, N8N_WEBHOOK_BASE_URL: 'https://n8n.test/webhook' }, fetch: fetchImpl, logSink: () => {} });
-    expect((await withN8n.proxy({ endpoint: 'khadmat-intent' }, { requestId: null })).status).toBe(200);
-    expect(seen).toEqual(['https://n8n.test/webhook/khadmat-intent']);
+    expect((await withN8n.proxy({ endpoint: 'khadmat-dispute' }, { requestId: null })).status).toBe(200);
+    expect(seen).toEqual(['https://n8n.test/webhook/khadmat-dispute']);
   });
 
   it('uses the console email fallback when GMAIL_* is not set, and the booking still confirms', async () => {

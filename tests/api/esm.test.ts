@@ -26,7 +26,8 @@ describe('api/ in plain Node ESM', () => {
   it('imports and answers requests without a bundler', async () => {
     await build({
       absWorkingDir: root,
-      entryPoints: [...tsFiles('api'), ...tsFiles('lib')],
+      // src/lib/intent.ts is the keyword parser the server falls back to.
+      entryPoints: [...tsFiles('api'), ...tsFiles('lib'), 'src/lib/intent.ts'],
       outdir: out,
       outbase: '.',
       bundle: false,
@@ -46,10 +47,13 @@ describe('api/ in plain Node ESM', () => {
       };
       const proxy = await call('proxy.js', { endpoint: 'khadmat-nope' });
       const booking = await call('booking.js', { action: 'confirm' });
-      console.log(JSON.stringify({ proxy, booking }));
+      // No network needed: no Gemini key (keyword parser), and no services means no map lookup.
+      const intent = await call('intent.js', { raw_message: 'hello' });
+      const match = await call('provider-match.js', { location: 'G-13' });
+      console.log(JSON.stringify({ proxy, booking, intent, match }));
     `;
     const env = Object.fromEntries(
-      Object.entries(process.env).filter(([k]) => !k.startsWith('SUPABASE_') && !k.startsWith('N8N_') && !k.startsWith('GMAIL_')),
+      Object.entries(process.env).filter(([k]) => !k.startsWith('SUPABASE_') && !k.startsWith('N8N_') && !k.startsWith('GMAIL_') && !k.startsWith('GEMINI_')),
     );
     const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env });
 
@@ -60,5 +64,8 @@ describe('api/ in plain Node ESM', () => {
     // No Supabase env in the child: a logged config error and a generic 500.
     expect(result.booking).toEqual([500, { status: 'internal_error', message: 'Something went wrong. Please try again.' }]);
     expect(child.stderr).toContain('booking.config_error');
+    expect(result.intent[0]).toBe(200);
+    expect(result.intent[1]).toMatchObject({ status: 'clarification_needed', intent_source: 'keyword_fallback' });
+    expect(result.match).toEqual([200, expect.objectContaining({ status: 'error', message: 'No services found in match result' })]);
   }, 30_000);
 });
