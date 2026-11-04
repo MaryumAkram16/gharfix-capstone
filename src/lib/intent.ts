@@ -449,7 +449,8 @@ function phoneticNormalize(str: string): string {
     .replace(/ck/g, 'k')
     .replace(/qu/g, 'k')
     // Vowel normalization: collapse only clearly equivalent sounds
-    .replace(/ou/g, 'o')           // "lahaur" → "lahor"
+    .replace(/au/g, 'o')           // "lahaur" → "lahor"
+    .replace(/ou/g, 'o')           // "lahour" → "lahor"
     .replace(/oo/g, 'u')           // "moosa" → "musa"
     .replace(/ee/g, 'i')           // "beet" → "bit"
     .replace(/ei/g, 'i')
@@ -480,22 +481,99 @@ function levenshtein(a: string, b: string): number {
 }
 
 /**
- * Returns true if `word` is a close phonetic/fuzzy match to `alias`.
- * Only applies to Latin-script aliases of 4+ characters.
- * Threshold: 1 edit per 4 chars — e.g. alias length 8 → threshold 2.
+ * Everyday Roman Urdu / English words. They are never fuzzy-matched to a
+ * service, city or area: "mein" is one edit from "mice", "aur" from "door",
+ * "kharab" from the city "Karak". (Exact alias matching is unaffected, so
+ * "pani" still means plumber.)
  */
-function fuzzyMatch(word: string, alias: string): boolean {
-  if (/[\u0600-\u06FF]/.test(alias) || alias.length < 4) return false;
-  const pw = phoneticNormalize(word);
-  const pa = phoneticNormalize(alias);
-  if (pw === pa) return true;
-  const threshold = Math.max(1, Math.floor(alias.length / 4));
-  return levenshtein(pw, pa) <= threshold;
+export const FUZZY_STOPWORDS = new Set([
+  'mera', 'meri', 'mere', 'mujhe', 'mujhy', 'mujy', 'mujh', 'hamein', 'hume', 'humein',
+  'chahiye', 'chahye', 'chahie', 'chaiye', 'nahi', 'nahin', 'nai', 'raha', 'rahi', 'rahe',
+  'karna', 'karne', 'karo', 'kar', 'krna', 'hai', 'hain', 'haye', 'tha', 'thi', 'mein', 'main', 'aur', 'bhi',
+  'kharab', 'masla', 'jaldi', 'abhi', 'subah', 'shaam', 'kal', 'aaj', 'parson', 'ghar', 'wala', 'wali',
+  'gaya', 'gayi', 'hoga', 'kya', 'kab', 'kahan', 'bhai', 'please', 'plz', 'liye', 'bhejo', 'theek', 'thik',
+  'needed', 'need', 'want', 'have', 'there', 'urgent', 'today', 'tomorrow', 'and', 'the', 'near',
+]);
+
+const FUZZY_MIN_LENGTH = 5;
+
+/** Input words for fuzzy matching: punctuation (" | " from the chat) removed, stopwords left as blanks so phrase windows never bridge them. */
+function fuzzyTokens(normalizedInput: string): string[] {
+  return normalizedInput
+    .replace(/[|,.!?;:()"']/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => (FUZZY_STOPWORDS.has(w) ? '' : w));
+}
+
+function editThreshold(len: number): number {
+  return Math.max(1, Math.floor(len / 4));
 }
 
 /**
- * Core fuzzy lookup: finds the best fuzzy match for any word (or phrase window)
- * in the input against all aliases in a given dictionary.
+ * Edit distance between a heard word and an alias word, or null if they are
+ * not close enough. Short words (under 4 letters) must match exactly after
+ * phonetic normalisation; longer ones allow 1 edit per 4 letters.
+ */
+function wordDistance(word: string, aliasWord: string): number | null {
+  if (!word) return null;
+  const pw = phoneticNormalize(word);
+  const pa = phoneticNormalize(aliasWord);
+  if (pw === pa) return 0;
+  if (word.length < 4 || aliasWord.length < 4) return null;
+  const d = levenshtein(pw, pa);
+  return d <= editThreshold(aliasWord.length) ? d : null;
+}
+
+type FuzzyCandidate = { canonical: string; heard: string; score: number; start: number; len: number };
+
+/**
+ * A match covering more words wins ("johar tawn" -> Johar Town beats
+ * "johar" -> Gulistan-e-Jauhar), then the one with fewer edits. Ties keep
+ * dictionary order (Array.sort is stable).
+ */
+function byCoverageThenScore(a: FuzzyCandidate, b: FuzzyCandidate): number {
+  return b.len - a.len || a.score - b.score;
+}
+
+/**
+ * Every fuzzy candidate in the input for a dictionary. Single-word aliases
+ * need 5+ letters on both sides. Multi-word aliases match word by word, so
+ * one wholly different word cannot hide inside the phrase ("ac kharab" is not
+ * "gaari kharab", "ac repare" is not "pc repair").
+ */
+function fuzzyCandidates(tokens: string[], dict: Record<string, string[]>, skip: Set<string> = new Set()): FuzzyCandidate[] {
+  const candidates: FuzzyCandidate[] = [];
+  for (const [canonicalName, aliases] of Object.entries(dict)) {
+    if (skip.has(canonicalName)) continue;
+    for (const alias of aliases) {
+      if (/[؀-ۿ]/.test(alias) || alias.length < 4) continue;
+      const aliasWords = alias.split(/\s+/);
+
+      if (aliasWords.length === 1) {
+        if (alias.length < FUZZY_MIN_LENGTH) continue;
+        tokens.forEach((word, wi) => {
+          if (word.length < FUZZY_MIN_LENGTH) return;
+          const d = wordDistance(word, alias);
+          if (d !== null) candidates.push({ canonical: canonicalName, heard: word, score: d, start: wi, len: 1 });
+        });
+      } else {
+        for (let i = 0; i <= tokens.length - aliasWords.length; i++) {
+          const window = tokens.slice(i, i + aliasWords.length);
+          const distances = window.map((w, k) => wordDistance(w, aliasWords[k]));
+          if (distances.some((d) => d === null)) continue;
+          const score = (distances as number[]).reduce((a, b) => a + b, 0);
+          candidates.push({ canonical: canonicalName, heard: window.join(' '), score, start: i, len: aliasWords.length });
+        }
+      }
+    }
+  }
+  return candidates;
+}
+
+/**
+ * Core fuzzy lookup: the single best fuzzy match for any word (or phrase
+ * window) in the input against a dictionary.
  *
  * Returns { matched: canonicalName, heard: whatUserSaid } or null.
  */
@@ -503,51 +581,15 @@ function fuzzyLookup(
   normalizedInput: string,
   dict: Record<string, string[]>
 ): { matched: string; heard: string } | null {
-  const words = normalizedInput.split(/\s+/);
-  let bestScore = Infinity;
-  let bestMatch: string | null = null;
-  let bestHeard: string | null = null;
-
-  for (const [canonicalName, aliases] of Object.entries(dict)) {
-    for (const alias of aliases) {
-      if (/[\u0600-\u06FF]/.test(alias) || alias.length < 4) continue;
-
-      const aliasWords = alias.split(/\s+/);
-
-      if (aliasWords.length === 1) {
-        for (const word of words) {
-          if (word.length < 3) continue;
-          const score = levenshtein(phoneticNormalize(word), phoneticNormalize(alias));
-          const threshold = Math.max(1, Math.floor(alias.length / 4));
-          if (score <= threshold && score < bestScore) {
-            bestScore = score;
-            bestMatch = canonicalName;
-            bestHeard = word;
-          }
-        }
-      } else {
-        for (let i = 0; i <= words.length - aliasWords.length; i++) {
-          const chunk = words.slice(i, i + aliasWords.length).join(' ');
-          const score = levenshtein(phoneticNormalize(chunk), phoneticNormalize(alias));
-          const threshold = Math.max(1, Math.floor(alias.length / 4));
-          if (score <= threshold && score < bestScore) {
-            bestScore = score;
-            bestMatch = canonicalName;
-            bestHeard = chunk;
-          }
-        }
-      }
-    }
-  }
-
-  return bestMatch ? { matched: bestMatch, heard: bestHeard! } : null;
+  const [best] = fuzzyCandidates(fuzzyTokens(normalizedInput), dict).sort(byCoverageThenScore);
+  return best ? { matched: best.canonical, heard: best.heard } : null;
 }
 
 /**
  * Like fuzzyLookup, but returns ALL fuzzy matches above threshold —
  * used for services where a user may request multiple at once.
  * Each word/chunk in the input is tested independently, so
- * "plummer and electrishun" finds both "plumber" and "electrician".
+ * "plummer and carpanter" finds both "plumber" and "carpenter".
  *
  * A word already claimed by an exact match is skipped to avoid double-counting.
  */
@@ -556,47 +598,13 @@ function fuzzyLookupAll(
   dict: Record<string, string[]>,
   alreadyMatched: Set<string>
 ): Array<{ matched: string; heard: string }> {
-  const words = normalizedInput.split(/\s+/);
   // Track which input word positions have been consumed so we don't match twice
   const usedPositions = new Set<number>();
   const results: Array<{ matched: string; heard: string }> = [];
+  const candidates = fuzzyCandidates(fuzzyTokens(normalizedInput), dict, alreadyMatched);
 
-  // Build candidate list: (canonicalName, alias, score, startIdx, length)
-  type Candidate = { canonical: string; heard: string; score: number; start: number; len: number };
-  const candidates: Candidate[] = [];
-
-  for (const [canonicalName, aliases] of Object.entries(dict)) {
-    if (alreadyMatched.has(canonicalName)) continue;
-
-    for (const alias of aliases) {
-      if (/[\u0600-\u06FF]/.test(alias) || alias.length < 4) continue;
-
-      const aliasWords = alias.split(/\s+/);
-      const threshold = Math.max(1, Math.floor(alias.length / 4));
-
-      if (aliasWords.length === 1) {
-        for (let wi = 0; wi < words.length; wi++) {
-          const word = words[wi];
-          if (word.length < 3) continue;
-          const score = levenshtein(phoneticNormalize(word), phoneticNormalize(alias));
-          if (score <= threshold) {
-            candidates.push({ canonical: canonicalName, heard: word, score, start: wi, len: 1 });
-          }
-        }
-      } else {
-        for (let i = 0; i <= words.length - aliasWords.length; i++) {
-          const chunk = words.slice(i, i + aliasWords.length).join(' ');
-          const score = levenshtein(phoneticNormalize(chunk), phoneticNormalize(alias));
-          if (score <= threshold) {
-            candidates.push({ canonical: canonicalName, heard: chunk, score, start: i, len: aliasWords.length });
-          }
-        }
-      }
-    }
-  }
-
-  // Sort by score ascending, then greedily pick non-overlapping matches
-  candidates.sort((a, b) => a.score - b.score);
+  // Longest phrase first, then fewest edits; greedily pick non-overlapping matches
+  candidates.sort(byCoverageThenScore);
   const matchedCanonicals = new Set<string>();
 
   for (const c of candidates) {
@@ -628,6 +636,40 @@ function inputIncludes(alias: string, normalizedInput: string, originalInput: st
   }
   
   return normalizedInput.includes(lowerAlias);
+}
+
+// =========================
+// AREA FALLBACK (Latin script)
+// =========================
+const AREA_FILLER = new Set(['in', 'at', 'a', 'an', 'pkr', 'rs', 'price', 'asap', 'ka', 'ki', 'ke', 'ko', 'se', 'pe', 'par', 'ho', 'aa', 'jao', 'is', 'my', 'for']);
+
+/**
+ * What is left of the message once the city, every service alias and filler
+ * words are removed, as whole words. Accepted as the area only if 1-4 words
+ * remain, so a sentence ("mera fridge kharab ho gaya hai...") or a service
+ * word ("plumber chahiye Lahore") never becomes an area. The old version
+ * removed "a", "in", "at" from inside words, which turned "kharab" into "khrb".
+ */
+export function latinAreaLeftover(normalizedInput: string, city: string): string | null {
+  const cityKey = Object.keys(cityAliases).find(k => k.replace(/_/g, ' ') === city);
+  const phrases = [...(cityKey ? cityAliases[cityKey] : []), city, ...Object.values(serviceAliases).flat()]
+    .filter(a => !/[\u0600-\u06FF]/.test(a))
+    .map(a => a.toLowerCase().replace(/[|,.!?;:()"']/g, ' ').trim())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+
+  let text = ` ${normalizedInput.replace(/[|,.!?;:()"']/g, ' ')} `;
+  for (const phrase of phrases) {
+    const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+    text = text.replace(new RegExp(`(^|\\s)${escaped}(?=\\s|$)`, 'g'), ' ');
+  }
+  const words = text
+    .split(/\s+/)
+    .map(w => w.replace(/[^a-z0-9-]/g, ''))
+    .filter(w => w && !FUZZY_STOPWORDS.has(w) && !AREA_FILLER.has(w));
+  if (words.length === 0 || words.length > 4) return null;
+  const area = words.join(' ');
+  return area.length > 2 && !/^\d+$/.test(area) ? area : null;
 }
 
 // =========================
@@ -721,34 +763,17 @@ export function extractIntent(input: string) {
         .trim();
       if (fallback.length > 1) area = fallback;
     } else {
-      // Build a dynamic regex from all service aliases to strip them from the area fallback
-      const allServiceAliases = Object.values(serviceAliases).flat();
-      const serviceRegex = new RegExp(allServiceAliases.map(v => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'gi');
-      
-      let fallback = normalizedInput
-        .replace(city.toLowerCase(), '')
-        .replace(serviceRegex, '')
-        .replace(/main|mein|near|chahiye|chahye|urgent|asap|in|at|the|a|an|pkr|rs|price/g, '')
-        .replace(/[^a-z0-9\s\u0600-\u06FF-]/g, '')
-        .trim();
-      if (fallback.length > 2 && !/^\d+$/.test(fallback)) area = fallback;
+      area = latinAreaLeftover(normalizedInput, city);
     }
   }
 
-  // AREA — Step 4: Input might just be the area name after city
-  if (!area && city) {
+  // AREA — Step 4 (Urdu script): Input might just be the area name after city.
+  // Latin script is fully handled by latinAreaLeftover() in step 3.
+  if (!area && city && isUrduScript) {
     const cityKey = Object.keys(cityAliases).find(k => k.replace(/_/g, ' ') === city) || city;
-    const cityLower = city.toLowerCase();
-    let inputWithoutCity = isUrduScript
-      ? originalInput.replace(new RegExp((cityAliases[cityKey] || []).join('|'), 'g'), '').trim()
-      : normalizedInput.replace(cityLower, '').trim();
+    const inputWithoutCity = originalInput.replace(new RegExp((cityAliases[cityKey] || []).join('|'), 'g'), '').trim();
     if (inputWithoutCity.length > 0 && inputWithoutCity.length <= 50) {
-      const cleaned = isUrduScript
-        ? inputWithoutCity.replace(/میں|کے|کی|کا|سے|پر|چاہیے|ہے/g, '').trim()
-        : inputWithoutCity
-            .replace(/main|mein|near|in|at|the|a|an|chahiye|chahye|sector|block|phase|road/g, '')
-            .replace(/[^a-z0-9\s\u0600-\u06FF-]/g, '')
-            .trim();
+      const cleaned = inputWithoutCity.replace(/میں|کے|کی|کا|سے|پر|چاہیے|ہے/g, '').trim();
       if (cleaned.length > 1) area = cleaned;
     }
   }
