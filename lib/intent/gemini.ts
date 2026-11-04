@@ -52,8 +52,8 @@ export function createGeminiParser({
           signal: AbortSignal.timeout(timeoutMs),
         });
       } catch (err) {
-        const reason = err instanceof Error && err.name === 'TimeoutError' ? 'timed out' : 'network error';
-        throw new IntentParserError('unavailable', `Gemini ${reason}`);
+        const timedOut = err instanceof Error && err.name === 'TimeoutError';
+        throw new IntentParserError('unavailable', `Gemini ${timedOut ? 'timed out' : 'network error'}`, null, timedOut);
       }
 
       if (!res.ok) {

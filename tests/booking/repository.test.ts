@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { memoryLogger } from '../../lib/log';
 import {
-  BookingConflictError, createSupabaseRepository, pgIn, RepositoryError, supabaseConfigFromEnv,
+  BookingConflictError, createSupabaseRepository, createSupabaseRest, pgIn, RepositoryError, supabaseConfigFromEnv,
   type NewBooking, type SupabaseConfig,
 } from '../../lib/booking/repository';
 
@@ -169,6 +169,15 @@ describe('markConfirmationSent', () => {
     expect(Object.fromEntries(url.searchParams)).toEqual({ booking_id: 'eq.BK-TEST-0001', confirmation_sent_at: 'is.null' });
     expect(JSON.parse(init.body as string)).toEqual({ confirmation_sent_at: '2026-11-04T09:00:00.000Z' });
     expect(init.headers).toMatchObject({ Prefer: 'return=minimal' });
+  });
+});
+
+describe('empty success bodies (Prefer: return=minimal)', () => {
+  it('treats 201 and 204 without a body as null, but still rejects a non-JSON body', async () => {
+    const rest = createSupabaseRest(config, { fetch: fakeFetch(new Response(null, { status: 201 }), new Response(null, { status: 204 }), new Response('<html>', { status: 200 })).impl });
+    expect(await rest.request('workflow_incidents', 'POST', null, {}, { Prefer: 'return=minimal' })).toBeNull();
+    expect(await rest.request('bookings', 'PATCH', null, {})).toBeNull();
+    await expect(rest.request('bookings', 'GET', null)).rejects.toMatchObject({ kind: 'unexpected' });
   });
 });
 

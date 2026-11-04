@@ -29,7 +29,7 @@ export type ParserFailure = 'unavailable' | 'config' | 'blocked' | 'invalid_outp
 
 export class IntentParserError extends Error {
   readonly name = 'IntentParserError';
-  constructor(readonly reason: ParserFailure, message: string, readonly httpStatus: number | null = null) {
+  constructor(readonly reason: ParserFailure, message: string, readonly httpStatus: number | null = null, readonly timedOut = false) {
     super(message);
   }
 }

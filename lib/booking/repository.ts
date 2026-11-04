@@ -185,10 +185,11 @@ export function createSupabaseRest(config: SupabaseConfig, { fetch: fetchImpl = 
       }
 
       if (res.ok) {
-        // Prefer: return=minimal answers 204 with no body.
-        if (res.status === 204) return null;
+        // Prefer: return=minimal answers with no body: 204 for PATCH, 201 for POST.
+        const text = await res.text().catch(() => '');
+        if (text.trim() === '') return null;
         try {
-          return (await res.json()) as unknown;
+          return JSON.parse(text) as unknown;
         } catch {
           throw new RepositoryError('unexpected', `Supabase ${method} returned a non-JSON body`, res.status);
         }

@@ -2,6 +2,7 @@ import type { Env, FetchLike } from '../booking/deps.js';
 import type { LocalHandler } from '../http/proxy.js';
 import type { Logger } from '../log.js';
 import { createGeminiParser, DEFAULT_GEMINI_MODEL } from './gemini.js';
+import { resilientParser, type IncidentRecorder } from '../resilience/index.js';
 import { handleIntentRequest } from './handler.js';
 import type { IntentParser } from './types.js';
 
@@ -9,6 +10,7 @@ export interface IntentDepsOptions {
   env: Env;
   log: Logger;
   fetch?: FetchLike;
+  recorder?: IncidentRecorder;
 }
 
 /** Gemini when GEMINI_API_KEY is set, otherwise null (keyword parser only). */
@@ -29,8 +31,9 @@ export function createIntentRoute(opts: IntentDepsOptions, matchRoute: LocalHand
   let parser: IntentParser | null | undefined;
   return async (body, meta) => {
     if (parser === undefined) parser = intentParserFromEnv(opts);
+    const ctx = opts.recorder ? { workflow: 'khadmat-intent', requestId: meta.requestId, recorder: opts.recorder } : null;
     return handleIntentRequest(body, {
-      parser,
+      parser: parser && ctx ? resilientParser(parser, ctx) : parser,
       matchProviders: (input) => matchRoute(input, meta),
       now: () => new Date(),
       log: opts.log.child({ request_id: meta.requestId }),

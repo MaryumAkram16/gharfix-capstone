@@ -95,8 +95,11 @@ describe('createApp', () => {
     const app = createApp({ env: {}, logSink: (r) => logs.push(r) });
     const res = await app.proxy(confirm, { requestId: null });
     expect(res).toEqual({ status: 500, body: { status: 'internal_error', message: 'Something went wrong. Please try again.' } });
-    expect(logs[0]).toMatchObject({ event: 'booking.config_error' });
-    expect(JSON.stringify(logs[0])).toContain('SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY');
+    const configError = logs.find((r) => r.event === 'booking.config_error');
+    expect(configError).toBeDefined();
+    expect(JSON.stringify(configError)).toContain('SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY');
+    // A config error is a final failure too: recorded (here only logged, no Supabase) with step "config".
+    expect(logs.find((r) => r.event === 'incident.recorded')).toMatchObject({ workflow: 'khadmat-booking', step: 'config', error_class: 'Error', auto_fixed: false });
   });
 
   it('only forwards to n8n when N8N_WEBHOOK_BASE_URL is set', async () => {

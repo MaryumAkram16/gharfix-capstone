@@ -2,6 +2,7 @@ import type { Env, FetchLike } from '../booking/deps.js';
 import { createSupabaseRepository, supabaseConfigFromEnv, type CapacityReader } from '../booking/repository.js';
 import type { LocalHandler } from '../http/proxy.js';
 import type { Logger } from '../log.js';
+import { resilientCapacity, type IncidentRecorder } from '../resilience/index.js';
 import { createDemoDirectory, withDemoFallback } from './demo.js';
 import { handleProviderMatch, type MatchDeps } from './handler.js';
 import { createNominatimGeocoder, createOverpassDirectory, DEFAULT_NOMINATIM_URL, DEFAULT_OVERPASS_URL, DEFAULT_USER_AGENT } from './osm.js';
@@ -10,6 +11,7 @@ export interface MatchDepsOptions {
   env: Env;
   log: Logger;
   fetch?: FetchLike;
+  recorder?: IncidentRecorder;
 }
 
 /**
@@ -44,6 +46,9 @@ export function createMatchRoute(opts: MatchDepsOptions): LocalHandler {
   let deps: MatchDeps | null = null;
   return async (body, meta) => {
     deps ??= createMatchDeps(opts);
-    return handleProviderMatch(body, { ...deps, log: deps.log.child({ request_id: meta.requestId }) });
+    const capacity = opts.recorder
+      ? resilientCapacity(deps.capacity, { workflow: 'khadmat-provider-match', requestId: meta.requestId, recorder: opts.recorder })
+      : deps.capacity;
+    return handleProviderMatch(body, { ...deps, capacity, log: deps.log.child({ request_id: meta.requestId }) });
   };
 }
