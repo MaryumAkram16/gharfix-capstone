@@ -4,7 +4,9 @@ import type { Logger } from '../log.js';
 import { createSupabaseIncidentStore, type IncidentStore } from './incidents.js';
 import { createIncidentRecorder, DEFAULT_DEDUPE_WINDOW_MS, type IncidentRecorder } from './recorder.js';
 
-export { guarded, resilientCapacity, resilientEmail, resilientParser, resilientRepository, type GuardContext } from './guard.js';
+export {
+  guarded, resilientCapacity, resilientDirectory, resilientEmail, resilientGeocoder, resilientParser, resilientRepository, type GuardContext,
+} from './guard.js';
 export type { IncidentRecorder } from './recorder.js';
 
 type Env = Record<string, string | undefined>;

@@ -5,20 +5,28 @@ import type { LogRecord } from '../lib/log';
 import { DEMO_BADGE, transformMatchData } from '../src/lib/transformer';
 
 // USE_DEMO_PROVIDERS through /api/proxy with only HTTP faked. The demo
-// directory may only fill in when Overpass answers with zero providers.
+// directory fills in when Overpass (main instance, then the mirror) answers
+// with zero providers or fails; with the flag off a failure stays a 503.
 
-type Overpass = 'empty' | 'results' | 'down';
+type Overpass = 'empty' | 'results' | 'down' | 'timeout';
 
-function fakeInternet(overpass: Overpass) {
+const OVERPASS_HOSTS = ['overpass-api.de', 'overpass.kumi.systems'];
+
+function overpassReply(mode: Overpass): Response {
+  if (mode === 'down') return new Response('', { status: 504 });
+  if (mode === 'timeout') return Response.json({ elements: [], remark: 'runtime error: Query timed out in "query" at line 3 after 6 seconds.' });
+  return Response.json({ elements: mode === 'empty' ? [] : [{ type: 'node', id: 7, lat: 33.657, lon: 73.015, tags: { name: 'Real G-13 Plumbers', craft: 'plumber' } }] });
+}
+
+/** `overpass` is the main instance; `mirror` defaults to the same behaviour. */
+function fakeInternet(overpass: Overpass, mirror: Overpass = overpass) {
   const hosts: string[] = [];
   const fetchImpl = async (input: string) => {
     const host = new URL(input).host;
     hosts.push(host);
     if (host === 'nominatim.openstreetmap.org') return Response.json([{ lat: '33.6557', lon: '73.0138', display_name: 'G-13, Islamabad, Pakistan' }]);
-    if (host === 'overpass-api.de') {
-      if (overpass === 'down') return new Response('', { status: 504 });
-      return Response.json({ elements: overpass === 'empty' ? [] : [{ type: 'node', id: 7, lat: 33.657, lon: 73.015, tags: { name: 'Real G-13 Plumbers', craft: 'plumber' } }] });
-    }
+    if (host === OVERPASS_HOSTS[0]) return overpassReply(overpass);
+    if (host === OVERPASS_HOSTS[1]) return overpassReply(mirror);
     throw new TypeError(`unexpected host ${host}`);
   };
   return { hosts, fetch: fetchImpl };
@@ -26,8 +34,8 @@ function fakeInternet(overpass: Overpass) {
 
 const match = { endpoint: 'khadmat-provider-match', services: ['plumber'], service_type: 'plumber', location: 'G-13, Islamabad', job_complexity: 'basic', budget_sensitivity: 'medium' };
 
-async function run(overpass: Overpass, flag?: string) {
-  const net = fakeInternet(overpass);
+async function run(overpass: Overpass, flag?: string, mirror: Overpass = overpass) {
+  const net = fakeInternet(overpass, mirror);
   const logs: LogRecord[] = [];
   const env = flag === undefined ? {} : { USE_DEMO_PROVIDERS: flag };
   const res = await createApp({ env, fetch: net.fetch, logSink: (r) => logs.push(r) }).proxy(match, { requestId: null });
@@ -35,6 +43,17 @@ async function run(overpass: Overpass, flag?: string) {
 }
 
 describe('USE_DEMO_PROVIDERS off (default)', () => {
+  it.each([['down'], ['timeout']] as const)('OSM %s on both instances: 503, with an incident and no demo data', async (mode) => {
+    const { res, logs, hosts } = await run(mode);
+    expect(res).toEqual({
+      status: 503,
+      body: { retryable: true, status: 'service_unavailable', message: 'Provider search is temporarily unavailable. Please try again in a minute.' },
+    });
+    expect(hosts.filter((h) => OVERPASS_HOSTS.includes(h))).toEqual(OVERPASS_HOSTS);
+    expect(logs.find((r) => r.event === 'incident.recorded')).toMatchObject({ step: 'osm.searchNearby', auto_fixed: false });
+    expect(logs.map((r) => r.event)).not.toContain('match.demo_fallback_used');
+  });
+
   it.each([[undefined], ['0'], ['true'], ['yes'], [' 1']])('flag %j: zero OSM providers stays "no providers"', async (flag) => {
     const { res, logs } = await run('empty', flag);
     expect(res).toEqual({ status: 200, body: NO_PROVIDERS_TEXT });
@@ -70,8 +89,43 @@ describe('USE_DEMO_PROVIDERS=1', () => {
     expect(ui.top_provider_card!.badges).not.toContain(DEMO_BADGE);
   });
 
-  it('does not use demo data when OSM is down: 503 as before', async () => {
-    const { res } = await run('down', '1');
+  it.each([['down'], ['timeout']] as const)('falls back to demo providers when OSM is %s (both instances), and still records the incident', async (mode) => {
+    const { res, logs, hosts } = await run(mode, '1');
+    const body = res.body as any;
+
+    expect(res.status).toBe(200);
+    expect(hosts.filter((h) => OVERPASS_HOSTS.includes(h))).toEqual(OVERPASS_HOSTS); // main, then mirror
+    expect(body.data_source).toBe('demo_seed');
+    expect(body.data_notes).toMatchObject({ demo_reason: 'osm_unavailable', note: expect.stringMatching(/^DEMO DATA: OpenStreetMap could not be reached/) });
+    expect(body.services[0].provider).toMatchObject({ source: 'demo_seed', name: expect.stringMatching(/^\[DEMO\] /) });
+    expect(logs.find((r) => r.event === 'incident.recorded')).toMatchObject({
+      workflow: 'khadmat-provider-match', step: 'osm.searchNearby', auto_fixed: false, retryable: true,
+      error_class: mode === 'down' ? 'MapsUnavailableError:directory:504' : 'MapsUnavailableError:directory:timeout',
+    });
+    expect(logs.find((r) => r.event === 'match.demo_fallback_used')).toMatchObject({ reason: 'osm_unavailable' });
+
+    const ui = transformMatchData(body);
+    expect(ui.is_demo).toBe(true);
+    expect(ui.demo_reason).toBe('osm_unavailable');
+    expect(ui.top_provider_card!.badges[0]).toBe(DEMO_BADGE);
+  });
+
+  it('uses the mirror, not demo data, when only the main Overpass instance fails', async () => {
+    const { res, hosts, logs } = await run('down', '1', 'results');
+    const body = res.body as any;
+    expect(body.data_source).toBe('openstreetmap');
+    expect(body.services[0].provider).toMatchObject({ id: 'osm:node/7', source: 'openstreetmap' });
+    expect(hosts.filter((h) => OVERPASS_HOSTS.includes(h))).toEqual(OVERPASS_HOSTS);
+    expect(logs.map((r) => r.event)).toEqual(expect.arrayContaining(['osm.mirror_failed', 'osm.mirror_used']));
+    // The mirror answered, so no OpenStreetMap incident (this env has no Supabase, so the capacity read records its own).
+    expect(logs.filter((r) => r.event === 'incident.recorded' && String(r.step).startsWith('osm.'))).toEqual([]);
+  });
+
+  it('still answers 503 (not "no providers") when OSM is down and the demo has nothing for the area', async () => {
+    const net = fakeInternet('down');
+    const karachi = async (input: string) =>
+      new URL(input).host === 'nominatim.openstreetmap.org' ? Response.json([{ lat: '24.8138', lon: '67.0300', display_name: 'Clifton, Karachi' }]) : net.fetch(input);
+    const res = await createApp({ env: { USE_DEMO_PROVIDERS: '1' }, fetch: karachi, logSink: () => {} }).proxy({ ...match, location: 'Clifton, Karachi' }, { requestId: null });
     expect(res.status).toBe(503);
   });
 

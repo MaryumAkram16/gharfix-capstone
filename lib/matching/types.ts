@@ -33,7 +33,12 @@ export interface Place {
   sourceUrl: string;
   /** Where the place came from. "demo_seed" places are fictional (db/seed/demo_providers.json). */
   source: ProviderSource;
+  /** Demo places only: why the demo directory was used. */
+  demoReason?: DemoReason;
 }
+
+/** osm_empty: OpenStreetMap answered with no providers. osm_unavailable: it timed out or failed. */
+export type DemoReason = 'osm_empty' | 'osm_unavailable';
 
 export type ProviderSource = 'openstreetmap' | 'demo_seed';
 

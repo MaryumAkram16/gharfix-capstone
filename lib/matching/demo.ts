@@ -2,7 +2,7 @@ import type { Logger } from '../log.js';
 import type { NearbySearch, ProviderDirectory } from './directory.js';
 import { ruleFor } from './osmServices.js';
 import { haversineKm } from './providers.js';
-import type { Place } from './types.js';
+import type { DemoReason, Place } from './types.js';
 
 // Optional demo directory: fictional, clearly labelled providers in Lahore
 // and Islamabad (db/seed/demo_providers.json). It is wired in only when
@@ -104,17 +104,31 @@ export function createDemoDirectory(load: () => Promise<DemoDataset> = loadDemoD
 }
 
 /**
- * The real directory first. Only when it answers with zero providers is the
- * demo directory asked. Errors from the real directory propagate unchanged.
+ * The real directory first. The demo directory is asked when the real one
+ * answers with zero providers, or fails (timeout, outage, error). Wrap the
+ * real directory with lib/resilience first, so its failure is recorded as an
+ * incident before it is covered up here.
+ *
+ * If the demo has nothing either (outside Lahore/Islamabad), a real failure
+ * is rethrown, so the customer still gets "try again" (503) rather than a
+ * false "no providers found".
  */
 export function withDemoFallback(primary: ProviderDirectory, demo: ProviderDirectory, log?: Logger): ProviderDirectory {
   return {
     async searchNearby(search) {
-      const real = await primary.searchNearby(search);
-      if (real.length > 0) return real;
+      let reason: DemoReason = 'osm_empty';
+      let failure: unknown = null;
+      try {
+        const real = await primary.searchNearby(search);
+        if (real.length > 0) return real;
+      } catch (err) {
+        reason = 'osm_unavailable';
+        failure = err;
+      }
       const fallback = await demo.searchNearby(search);
-      log?.warn('match.demo_fallback_used', { services: search.services, demo_results: fallback.length });
-      return fallback;
+      log?.warn('match.demo_fallback_used', { services: search.services, reason, demo_results: fallback.length, error: failure ?? undefined });
+      if (failure !== null && fallback.length === 0) throw failure;
+      return fallback.map((p) => ({ ...p, demoReason: reason }));
     },
   };
 }

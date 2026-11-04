@@ -32,7 +32,7 @@ export type { CapacityReader } from '../booking/repository.js';
 /** The map/directory service did not answer (network, timeout, 429, 5xx). Worth retrying later. */
 export class MapsUnavailableError extends Error {
   readonly name = 'MapsUnavailableError';
-  constructor(readonly service: 'geocoder' | 'directory', message: string, readonly httpStatus: number | null = null) {
+  constructor(readonly service: 'geocoder' | 'directory', message: string, readonly httpStatus: number | null = null, readonly timedOut = false) {
     super(message);
   }
 }

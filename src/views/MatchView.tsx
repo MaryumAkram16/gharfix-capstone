@@ -301,7 +301,7 @@ export function MatchView({ data, onBook, appLanguage, onSearchAgain }: MatchVie
       disclaimer: "Final price may vary slightly based on actual work required.",
       topRated: "Best Match", alternative: "Alternative Providers",
       secure: "Secure Booking · Protected by KhidmatGaar",
-      demoTitle: "Demo data.", demoText: "No OpenStreetMap listings were found nearby, so these are sample providers, not real businesses.",
+      demoTitle: "Demo data.", demoText: "No OpenStreetMap listings were found nearby, so these are sample providers, not real businesses.", demoTextUnavailable: "OpenStreetMap could not be reached right now, so these are sample providers, not real businesses.",
       showMore: "Show More Providers", showLess: "Show Less Providers",
       changeSearch: "Search Again",
     },
@@ -316,7 +316,7 @@ export function MatchView({ data, onBook, appLanguage, onSearchAgain }: MatchVie
       disclaimer: "کام کی نوعیت کے مطابق حتمی قیمت تھوڑی تبدیل ہو سکتی ہے۔",
       topRated: "بہترین انتخاب", alternative: "دیگر فراہم کنندگان",
       secure: "محفوظ بکنگ بذریعہ خدمت گار",
-      demoTitle: "ڈیمو ڈیٹا۔", demoText: "قریب کوئی اوپن اسٹریٹ میپ لسٹنگ نہیں ملی، اس لیے یہ نمونہ فراہم کنندگان ہیں، حقیقی کاروبار نہیں۔",
+      demoTitle: "ڈیمو ڈیٹا۔", demoText: "قریب کوئی اوپن اسٹریٹ میپ لسٹنگ نہیں ملی، اس لیے یہ نمونہ فراہم کنندگان ہیں، حقیقی کاروبار نہیں۔", demoTextUnavailable: "اس وقت اوپن اسٹریٹ میپ سے رابطہ نہیں ہو سکا، اس لیے یہ نمونہ فراہم کنندگان ہیں، حقیقی کاروبار نہیں۔",
       showMore: "مزید فراہم کنندگان", showLess: "کم فراہم کنندگان",
       changeSearch: "دوبارہ تلاش کریں",
     },
@@ -331,7 +331,7 @@ export function MatchView({ data, onBook, appLanguage, onSearchAgain }: MatchVie
       disclaimer: "Final price may vary slightly based on actual work required.",
       topRated: "Best Match", alternative: "Alternative Providers",
       secure: "Secure Booking · Protected by KhidmatGaar",
-      demoTitle: "Demo data.", demoText: "No OpenStreetMap listings were found nearby, so these are sample providers, not real businesses.",
+      demoTitle: "Demo data.", demoText: "No OpenStreetMap listings were found nearby, so these are sample providers, not real businesses.", demoTextUnavailable: "OpenStreetMap could not be reached right now, so these are sample providers, not real businesses.",
       showMore: "Show More Providers", showLess: "Show Less Providers",
       changeSearch: "Search Again",
     },
@@ -509,7 +509,7 @@ export function MatchView({ data, onBook, appLanguage, onSearchAgain }: MatchVie
         <div role="note" data-testid="demo-data-banner" className="flex items-start gap-3 bg-amber-50 border border-amber-300 text-amber-900 rounded-2xl px-4 py-3">
           <Info className="w-4 h-4 mt-0.5 shrink-0" />
           <p className="text-xs leading-relaxed">
-            <span className="font-black uppercase tracking-wide">{t.demoTitle}</span> {t.demoText}
+            <span className="font-black uppercase tracking-wide">{t.demoTitle}</span> {uiData.demo_reason === 'osm_unavailable' ? t.demoTextUnavailable : t.demoText}
           </p>
         </div>
       )}
