@@ -1,0 +1,67 @@
+import type { Logger } from '../log.js';
+import { DEFAULT_NOMINATIM_URL, DEFAULT_OVERPASS_FALLBACK_URL, DEFAULT_OVERPASS_URL, DEFAULT_USER_AGENT } from './osm.js';
+
+// OpenStreetMap endpoints and timeouts from env vars. Defaults keep a
+// provider search well inside a serverless time limit:
+//   Nominatim 5 s + Overpass 8 s per instance, 12 s across both instances.
+// Invalid values fall back to the default with a warning, never a crash.
+
+type Env = Record<string, string | undefined>;
+
+export interface OsmConfig {
+  nominatimUrl: string;
+  nominatimTimeoutMs: number;
+  /** Tried in order; the second is the mirror. */
+  overpassUrls: string[];
+  overpassTimeoutMs: number;
+  overpassBudgetMs: number;
+  userAgent: string;
+}
+
+export const OSM_DEFAULTS = {
+  nominatimTimeoutMs: 5000,
+  overpassTimeoutMs: 8000,
+  overpassBudgetMs: 12000,
+} as const;
+
+const MIN_MS = 1000;
+const MAX_MS = 60000;
+
+function url(env: Env, name: string, fallback: string, log?: Logger): string {
+  const raw = env[name]?.trim();
+  if (!raw) return fallback;
+  try {
+    const u = new URL(raw);
+    if (u.protocol === 'https:' || u.protocol === 'http:') return raw;
+  } catch {
+    // fall through
+  }
+  log?.warn('osm.config_invalid', { variable: name, using: fallback });
+  return fallback;
+}
+
+function ms(env: Env, name: string, fallback: number, log?: Logger): number {
+  const raw = env[name]?.trim();
+  if (!raw) return fallback;
+  const n = Number(raw);
+  if (Number.isInteger(n) && n >= MIN_MS && n <= MAX_MS) return n;
+  log?.warn('osm.config_invalid', { variable: name, using: fallback, allowed: `${MIN_MS}-${MAX_MS} ms` });
+  return fallback;
+}
+
+export function osmConfigFromEnv(env: Env, log?: Logger): OsmConfig {
+  const primary = url(env, 'OVERPASS_URL', DEFAULT_OVERPASS_URL, log);
+  const mirrorRaw = env.OVERPASS_FALLBACK_URL?.trim();
+  const mirror = mirrorRaw?.toLowerCase() === 'off' ? null : url(env, 'OVERPASS_FALLBACK_URL', DEFAULT_OVERPASS_FALLBACK_URL, log);
+  const overpassTimeoutMs = ms(env, 'OVERPASS_TIMEOUT_MS', OSM_DEFAULTS.overpassTimeoutMs, log);
+  const budget = ms(env, 'OVERPASS_BUDGET_MS', OSM_DEFAULTS.overpassBudgetMs, log);
+  return {
+    nominatimUrl: url(env, 'NOMINATIM_URL', DEFAULT_NOMINATIM_URL, log),
+    nominatimTimeoutMs: ms(env, 'NOMINATIM_TIMEOUT_MS', OSM_DEFAULTS.nominatimTimeoutMs, log),
+    overpassUrls: mirror && mirror !== primary ? [primary, mirror] : [primary],
+    overpassTimeoutMs,
+    // The budget can never be shorter than one attempt.
+    overpassBudgetMs: Math.max(budget, overpassTimeoutMs),
+    userAgent: env.OSM_USER_AGENT?.trim() || DEFAULT_USER_AGENT,
+  };
+}

@@ -41,10 +41,18 @@ describe('transformMatchData demo labelling', () => {
     expect(ui.top_provider_card!.badges).toEqual(['Demo data', 'Best Match', 'Nearby']);
   });
 
+  it('passes on why demo data is shown (defaults to osm_empty)', () => {
+    const unavailable = demoBody();
+    (unavailable.matching_result as Record<string, unknown>).data_notes = { demo_reason: 'osm_unavailable' };
+    expect(transformMatchData(unavailable).demo_reason).toBe('osm_unavailable');
+    expect(transformMatchData(demoBody()).demo_reason).toBe('osm_empty');
+  });
+
   it('is off for OpenStreetMap results and old responses without data_source', () => {
     const osm = wf3({ id: 'osm:node/1', name: 'Real', distance_km: 1, source: 'openstreetmap' });
     (osm.matching_result as Record<string, unknown>).data_source = 'openstreetmap';
     expect(transformMatchData(osm).is_demo).toBe(false);
+    expect(transformMatchData(osm).demo_reason).toBeUndefined();
     expect(transformMatchData(wf3({ id: 'ChIJ-x', name: 'Old', rating: 4.2 })).is_demo).toBe(false);
     expect(transformMatchData(null).is_demo).toBe(false);
   });

@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BookingConflictError, CONSTRAINTS, RepositoryError, type NewBooking } from '../../lib/booking/repository';
 import { IntentParserError } from '../../lib/intent/types';
-import { guarded, resilientCapacity, resilientEmail, resilientParser, resilientRepository, type GuardContext } from '../../lib/resilience/guard';
+import { guarded, resilientCapacity, resilientDirectory, resilientEmail, resilientGeocoder, resilientParser, resilientRepository, type GuardContext } from '../../lib/resilience/guard';
+import { MapsUnavailableError } from '../../lib/matching/directory';
 import { errorClass, payloadHash } from '../../lib/resilience/incidents';
 import { isTransient, NO_RETRY, SUPABASE_READ } from '../../lib/resilience/policies';
 import { FakeBookingDb } from '../fakes/bookingDb';
@@ -222,5 +223,34 @@ describe('errorClass / payloadHash / isTransient', () => {
     expect(isTransient(new RepositoryError('unexpected', 'x', 401))).toBe(false);
     expect(isTransient(Object.assign(new Error('t'), { name: 'TimeoutError' }))).toBe(true);
     expect(isTransient(Object.assign(new Error('auth'), { code: 'EAUTH' }))).toBe(false);
+  });
+});
+
+describe('resilientDirectory / resilientGeocoder (OpenStreetMap)', () => {
+  it('records a directory failure as an incident, without retrying (mirrors are tried inside)', async () => {
+    const kit = recorderKit();
+    const search = vi.fn().mockRejectedValue(new MapsUnavailableError('directory', 'directory timed out (2 Overpass instance(s) tried)', null, true));
+    const dir = resilientDirectory({ searchNearby: search }, ctxFor(kit, 'khadmat-provider-match'));
+    await expect(dir.searchNearby({ services: ['plumber'], center: { lat: 0, lng: 0 }, radiusM: 5000, limit: 20 })).rejects.toBeInstanceOf(MapsUnavailableError);
+    expect(search).toHaveBeenCalledTimes(1);
+    expect(kit.store.rows).toEqual([expect.objectContaining({
+      workflow: 'khadmat-provider-match', step: 'osm.searchNearby', error_class: 'MapsUnavailableError:directory:timeout', retryable: true, auto_fixed: false,
+    })]);
+    expect(kit.alerts.sent[0].text).toMatch(/What you need to do: The public OpenStreetMap servers were slow or unreachable/);
+    expect(kit.alerts.sent[0].subject).toBe('[GharFix alert] khadmat-provider-match: searching OpenStreetMap (Overpass) for nearby providers failed');
+  });
+
+  it('records a geocoder failure too', async () => {
+    const kit = recorderKit();
+    const geo = resilientGeocoder({ geocode: async () => { throw new MapsUnavailableError('geocoder', 'geocoder answered HTTP 429', 429); } }, ctxFor(kit));
+    await expect(geo.geocode('G-13')).rejects.toBeInstanceOf(MapsUnavailableError);
+    expect(kit.store.rows[0]).toMatchObject({ step: 'osm.geocode', error_class: 'MapsUnavailableError:geocoder:429' });
+  });
+
+  it('passes successes through untouched', async () => {
+    const kit = recorderKit();
+    const geo = resilientGeocoder({ geocode: async () => null }, ctxFor(kit));
+    expect(await geo.geocode('Atlantis')).toBeNull();
+    expect(kit.store.rows).toEqual([]);
   });
 });

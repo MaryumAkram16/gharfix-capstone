@@ -1,6 +1,7 @@
 import type { CapacityReader, ReconcileReader, BookingRepository } from '../booking/repository.js';
 import type { EmailSender } from '../email/types.js';
 import type { IntentParser } from '../intent/types.js';
+import type { Geocoder, ProviderDirectory } from '../matching/directory.js';
 import { errorClass, payloadHash } from './incidents.js';
 import { GEMINI, NO_RETRY, SUPABASE_READ, describePolicy, insertPolicy, isExpectedOutcome, isTransient } from './policies.js';
 import type { IncidentRecorder } from './recorder.js';
@@ -86,6 +87,15 @@ export function resilientRepository<R extends Repo>(repo: R, ctx: GuardContext):
 
 export function resilientCapacity(capacity: CapacityReader, ctx: GuardContext): CapacityReader {
   return { activeBookingCounts: (date, ids) => guarded(ctx, 'supabase.activeBookingCounts', SUPABASE_READ, () => capacity.activeBookingCounts(date, ids)) };
+}
+
+/** OpenStreetMap: not retried here (the directory already tries a mirror), but every final failure is an incident. */
+export function resilientDirectory(directory: ProviderDirectory, ctx: GuardContext): ProviderDirectory {
+  return { searchNearby: (search) => guarded(ctx, 'osm.searchNearby', NO_RETRY, () => directory.searchNearby(search)) };
+}
+
+export function resilientGeocoder(geocoder: Geocoder, ctx: GuardContext): Geocoder {
+  return { geocode: (query) => guarded(ctx, 'osm.geocode', NO_RETRY, () => geocoder.geocode(query)) };
 }
 
 export function resilientParser(parser: IntentParser, ctx: GuardContext): IntentParser {

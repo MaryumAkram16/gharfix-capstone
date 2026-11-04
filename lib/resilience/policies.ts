@@ -1,5 +1,6 @@
 import { BookingConflictError, RepositoryError } from '../booking/repository.js';
 import { IntentParserError } from '../intent/types.js';
+import { MapsUnavailableError } from '../matching/directory.js';
 import { exponentialBackoff, type RetryPolicy } from './retry.js';
 
 // Which calls may be retried. The rule: only operations that cannot cause a
@@ -44,6 +45,7 @@ export function insertPolicy(row: { idempotency_key: string | null }): RetryPoli
 export function isTransient(err: unknown): boolean {
   if (err instanceof RepositoryError) return err.kind === 'unavailable';
   if (err instanceof IntentParserError) return err.reason === 'unavailable';
+  if (err instanceof MapsUnavailableError) return true;
   if (err instanceof Error) {
     const code = (err as Error & { code?: unknown }).code;
     return err.name === 'TimeoutError' || ['ETIMEDOUT', 'ECONNECTION', 'ECONNRESET', 'ESOCKET', 'EDNS'].includes(String(code));

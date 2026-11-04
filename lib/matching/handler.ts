@@ -30,6 +30,7 @@ export const NO_PROVIDERS_TEXT = 'Sorry, no providers found in your area for thi
 
 export const OSM_NOTE = 'OpenStreetMap lists businesses but has no ratings, reviews, prices or reliability history. Those fields are null, and scores count them as 0.';
 export const DEMO_NOTE = 'DEMO DATA: OpenStreetMap had no providers near this location, so these are fictional sample providers from db/seed/demo_providers.json. They are not real businesses.';
+export const DEMO_NOTE_UNAVAILABLE = 'DEMO DATA: OpenStreetMap could not be reached (timed out or failed), so these are fictional sample providers from db/seed/demo_providers.json. They are not real businesses.';
 
 // WF2's geocode fallback: known Islamabad sector centres. Its default of
 // "anything unknown is central Islamabad" is dropped: it sent Karachi and
@@ -128,6 +129,7 @@ export async function handleProviderMatch(body: unknown, deps: MatchDeps): Promi
 
     // A search returns one source only: demo places appear only when OpenStreetMap returned none.
     const source: ProviderSource = places.some((p) => p.source === 'demo_seed') ? 'demo_seed' : 'openstreetmap';
+    const demoReason = source === 'demo_seed' ? (places[0].demoReason ?? 'osm_empty') : undefined;
     log.info('match.done', { places: places.length, data_source: source, geocoder: geocoded.source, capacity_checked: capacityChecked });
     return ok({
       ...priced,
@@ -137,7 +139,8 @@ export async function handleProviderMatch(body: unknown, deps: MatchDeps): Promi
         distance: 'straight_line',
         capacity_checked: capacityChecked,
         not_available: source === 'demo_seed' ? [...DEMO_DATA_GAPS] : [...OSM_DATA_GAPS],
-        note: source === 'demo_seed' ? DEMO_NOTE : OSM_NOTE,
+        note: source === 'demo_seed' ? (demoReason === 'osm_unavailable' ? DEMO_NOTE_UNAVAILABLE : DEMO_NOTE) : OSM_NOTE,
+        ...(demoReason ? { demo_reason: demoReason } : {}),
       },
     });
   } catch (err) {

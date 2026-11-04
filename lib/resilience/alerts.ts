@@ -15,6 +15,8 @@ const STEP_NAMES: Record<string, string> = {
   'supabase.activeBookingCounts': "reading providers' booking counts from Supabase",
   'supabase.findUnconfirmed': 'finding bookings whose confirmation email was not sent',
   'gemini.parse': 'understanding the customer request with Gemini',
+  'osm.searchNearby': 'searching OpenStreetMap (Overpass) for nearby providers',
+  'osm.geocode': 'finding the location with OpenStreetMap (Nominatim)',
   'smtp.send': 'sending an email through Gmail SMTP',
 };
 
@@ -32,6 +34,9 @@ export function adviceFor(incident: Pick<Incident, 'step' | 'error_class'>): str
       return 'A table or column is missing. Run the pending migration(s) in db/ (001_booking_integrity.sql, 002_incidents.sql) in the Supabase SQL editor.';
     }
     return 'Supabase returned an unexpected error. Open the Vercel logs for the request id below.';
+  }
+  if (step.startsWith('osm.')) {
+    return 'The public OpenStreetMap servers were slow or unreachable (the Overpass mirror was tried too). Nothing to do if it recovers. If it keeps happening: raise OVERPASS_TIMEOUT_MS / NOMINATIM_TIMEOUT_MS, or point OVERPASS_URL / OVERPASS_FALLBACK_URL / NOMINATIM_URL at your own or a commercial instance. With USE_DEMO_PROVIDERS=1, customers were shown labelled demo providers meanwhile; otherwise they were asked to try again.';
   }
   if (step === 'gemini.parse') {
     if (e.includes(':config')) return 'Gemini rejected the request (bad key or model name). Check GEMINI_API_KEY and GEMINI_MODEL. Until then customers are served by the keyword parser.';

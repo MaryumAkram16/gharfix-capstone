@@ -56,6 +56,8 @@ export interface MatchViewData {
   no_match_reason?: string; // Reason why no providers found
   /** True when the providers are fictional demo data (data_source "demo_seed"). The UI must label them. */
   is_demo: boolean;
+  /** Why demo data is shown: OSM had no listings ("osm_empty") or could not be reached ("osm_unavailable"). */
+  demo_reason?: 'osm_empty' | 'osm_unavailable';
 }
 
 export const DEMO_BADGE = 'Demo data';
@@ -196,6 +198,7 @@ export function transformMatchData(backendResponse: any): MatchViewData {
 
   // Read before the WF3 flattening below drops it.
   const isDemo = raw.data_source === 'demo_seed';
+  const demoReason = isDemo ? (raw.data_notes?.demo_reason === 'osm_unavailable' ? 'osm_unavailable' : 'osm_empty') : undefined;
 
   // ── WF3 multi-service shape ──────────────────────────────────────────────
   // WF3 returns: { status, workflow, services: [{ service, provider, alternatives, pricing }], summary }
@@ -363,5 +366,6 @@ export function transformMatchData(backendResponse: any): MatchViewData {
     nearby_areas: nearbyAreas,
     no_match_reason: noMatchReason,
     is_demo: isDemo,
+    demo_reason: demoReason,
   };
 }

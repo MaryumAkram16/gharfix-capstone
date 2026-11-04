@@ -113,7 +113,7 @@ All routes are wired in one place, `lib/app.ts` (`createApp()`), used by both th
      - `GMAIL_USER` + `GMAIL_APP_PASSWORD` (without them, emails are only logged)
      - `ALERT_EMAIL`, `CRON_SECRET`
      - `USE_DEMO_PROVIDERS` (§7)
-     - `NOMINATIM_URL`, `OVERPASS_URL`, `OSM_USER_AGENT`, plus timeouts
+     - `NOMINATIM_URL`, `OVERPASS_URL`, `OVERPASS_FALLBACK_URL`, `OSM_USER_AGENT`, and the timeouts `NOMINATIM_TIMEOUT_MS`, `OVERPASS_TIMEOUT_MS`, `OVERPASS_BUDGET_MS` (§6)
 3. In the Supabase SQL editor, in this order:
    1. `db/bookings.sql` (and `waitlist.sql`, `provider_scores.sql` for the unported workflows), if the tables don't exist yet.
    2. `db/001_booking_integrity_check.sql`: read-only, must return zero rows.
@@ -185,7 +185,7 @@ Not tested live: no Gemini key was available while building this, so the Gemini 
 
 **Pipeline.**
 1. Geocode the location (Nominatim, Pakistan only, cached).
-2. Search 5 km around it (Overpass), using a service → OSM-tag/name table, e.g. `craft=plumber` or names containing "plumb".
+2. Search 5 km around it (Overpass), using a service → OSM-tag/name table, e.g. `craft=plumber` or names containing "plumb". If the main Overpass instance times out or fails, a second instance (mirror) is tried before giving up.
 3. Read today's real booking counts from Supabase.
 4. Map each place to WF2's provider schema.
 5. Score and price.
@@ -219,13 +219,26 @@ Pricing is the base rate plus a complexity multiplier (1.0 / 1.3 / 1.6), +20% in
 
 Because every OSM provider lacks the same three factors, they don't change the ranking between OSM providers; they lower everyone's absolute score equally.
 
-Not tested live: this environment's network policy blocks `nominatim.openstreetmap.org` and `overpass-api.de`, so the adapters are tested against fakes built from the documented response formats. Both public services have usage limits (Nominatim: at most 1 request/second with an identifying User-Agent); for real traffic, point `NOMINATIM_URL` / `OVERPASS_URL` at your own or a commercial instance.
+**Endpoints and timeouts** (env vars; invalid values fall back to the default with a warning):
+
+| Variable | Default |
+|---|---|
+| `NOMINATIM_URL` | `https://nominatim.openstreetmap.org` |
+| `NOMINATIM_TIMEOUT_MS` | 5000 |
+| `OVERPASS_URL` | `https://overpass-api.de/api/interpreter` |
+| `OVERPASS_FALLBACK_URL` | `https://overpass.kumi.systems/api/interpreter` (`off` disables) |
+| `OVERPASS_TIMEOUT_MS` | 8000, per instance |
+| `OVERPASS_BUDGET_MS` | 12000, across both instances; the mirror is skipped if less than 2 s is left |
+
+Every final failure of the geocoder or the directory is recorded as an incident (§8). The answer is then a 503, unless the demo fallback is on (§7).
+
+Not tested live: this environment's network policy blocks `nominatim.openstreetmap.org`, `overpass-api.de` and the mirror, so the adapters and the mirror logic are tested against fakes built from the documented response formats. The public services have usage limits (Nominatim: at most 1 request/second with an identifying User-Agent); for real traffic, point these URLs at your own or a commercial instance.
 
 ---
 
 ## 7. Demo-data fallback
 
-Off by default. With `USE_DEMO_PROVIDERS=1` (exactly `1`), when OpenStreetMap returns **zero** providers, matching falls back to `db/seed/demo_providers.json`: 18 fictional providers around 8 areas of Lahore and Islamabad.
+Off by default. With `USE_DEMO_PROVIDERS=1` (exactly `1`), matching falls back to `db/seed/demo_providers.json` (18 fictional providers around 8 areas of Lahore and Islamabad) when OpenStreetMap returns **zero** providers, or when it **fails**: both Overpass instances timed out or errored.
 
 - **Clearly labelled data:**
   - The file starts with a "DEMO DATA" notice.
@@ -234,7 +247,9 @@ Off by default. With `USE_DEMO_PROVIDERS=1` (exactly `1`), when OpenStreetMap re
 - **Clearly labelled responses:**
   - `data_source` is `"demo_seed"` (instead of `"openstreetmap"`), and every provider has `source: "demo_seed"`.
   - The UI shows a "DEMO DATA" banner and a "Demo data" badge on each card (checked in a browser).
-- **Never a substitute for an outage:** if OpenStreetMap is unreachable, the answer is still 503. Outside Lahore and Islamabad there are no demo providers.
+- **Why it is shown:** `data_notes.demo_reason` is `osm_empty` or `osm_unavailable`, and the banner says which ("no OpenStreetMap listings were found nearby" vs "OpenStreetMap could not be reached right now").
+- **An outage is still recorded:** the incident (and de-duplicated alert) is written before the demo covers for it.
+- **With the flag off,** an OpenStreetMap failure is a 503, as before. With the flag on but no demo providers for the area (outside Lahore and Islamabad), it is also a 503, never a false "no providers found".
 - **Bookings are real:** booking a demo provider writes a real booking row (identifiable by its `demo:` provider id and `[DEMO]` name).
 
 ---
@@ -313,7 +328,7 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/postgres npx vitest run t
 - **Keyword parser.** It is dictionary-based. Spellings it doesn't know are missed, and the fuzzy matcher is deliberately strict to avoid false services.
 - **Unported workflows.** Quality loop, disputes, rescheduling and the provider dashboard still need n8n (503 without it). Their screens still check `response.ok` before reading the body.
 - **Scheduling.** GitHub may delay or skip scheduled runs, and the reconcile workflow only runs once it is on the default branch.
-- **Time limits.** Worst-case latency when every dependency times out (Supabase 8 s × 3 tries, Gemini 8 s × 2) is long. Check the Vercel function duration limit for your plan.
+- **Time limits.** A provider search is bounded by Nominatim (5 s) + Overpass (12 s across both instances) by default. Worst-case latency when every dependency times out (Supabase 8 s × 3 tries, Gemini 8 s × 2) is still long. Check the Vercel function duration limit for your plan and lower the timeouts if needed.
 
 ---
 

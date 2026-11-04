@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { RepositoryError, type SupabaseRest } from '../booking/repository.js';
 import { IntentParserError } from '../intent/types.js';
+import { MapsUnavailableError } from '../matching/directory.js';
 
 // Rows for public.workflow_incidents (db/002). Every field is a
 // classification produced here, never free text, so a row cannot carry a
@@ -25,6 +26,7 @@ export interface IncidentStore {
 /** e.g. "RepositoryError:unavailable:503", "IntentParserError:config:403", "TimeoutError". */
 export function errorClass(err: unknown): string {
   if (err instanceof RepositoryError) return ['RepositoryError', err.kind, err.httpStatus ?? err.pgCode].filter((p) => p !== null && p !== undefined).join(':');
+  if (err instanceof MapsUnavailableError) return ['MapsUnavailableError', err.service, err.httpStatus ?? (err.timedOut ? 'timeout' : null)].filter((p) => p !== null).join(':');
   if (err instanceof IntentParserError) return ['IntentParserError', err.reason, err.httpStatus ?? (err.timedOut ? 'timeout' : null)].filter((p) => p !== null).join(':');
   if (err instanceof Error) {
     // Nodemailer errors carry an SMTP code ("EAUTH") and response code (535).

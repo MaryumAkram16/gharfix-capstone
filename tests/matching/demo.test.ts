@@ -110,11 +110,26 @@ describe('withDemoFallback', () => {
     expect(log.records).toEqual([expect.objectContaining({ level: 'warn', event: 'match.demo_fallback_used', demo_results: places.length })]);
   });
 
-  it('does not hide an OpenStreetMap outage behind demo data', async () => {
-    const demo = dirReturning([]);
+  it.each([
+    ['a 504', new MapsUnavailableError('directory', 'directory answered HTTP 504', 504)],
+    ['a timeout', new MapsUnavailableError('directory', 'directory timed out', null, true)],
+    ['an unexpected error', new Error('boom')],
+  ])('falls back to demo places after %s, marked osm_unavailable', async (_l, err) => {
+    const log = memoryLogger();
+    const places = await withDemoFallback(dirReturning(err), createDemoDirectory(), log).searchNearby(search());
+    expect(places.length).toBeGreaterThan(0);
+    expect(places.every((p) => p.source === 'demo_seed' && p.demoReason === 'osm_unavailable')).toBe(true);
+    expect(log.records[0]).toMatchObject({ event: 'match.demo_fallback_used', reason: 'osm_unavailable' });
+  });
+
+  it('marks zero-result fallbacks osm_empty', async () => {
+    const places = await withDemoFallback(dirReturning([]), createDemoDirectory()).searchNearby(search());
+    expect(places.every((p) => p.demoReason === 'osm_empty')).toBe(true);
+  });
+
+  it('rethrows the outage when the demo has nothing for the area', async () => {
     const down = new MapsUnavailableError('directory', 'directory answered HTTP 504', 504);
-    await expect(withDemoFallback(dirReturning(down), demo).searchNearby(search())).rejects.toBe(down);
-    expect(demo.calls).toBe(0);
+    await expect(withDemoFallback(dirReturning(down), dirReturning([])).searchNearby(search())).rejects.toBe(down);
   });
 });
 

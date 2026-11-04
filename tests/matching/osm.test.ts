@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { memoryLogger } from '../../lib/log';
 import { MapsUnavailableError } from '../../lib/matching/directory';
 import { createNominatimGeocoder, createOverpassDirectory, DEFAULT_USER_AGENT } from '../../lib/matching/osm';
 import { elementMatches, overpassQuery, ruleFor, SERVICE_RULES } from '../../lib/matching/osmServices';
@@ -162,5 +163,96 @@ describe('Overpass directory', () => {
   ])('throws MapsUnavailableError on %s', async (_l, response) => {
     const dir = createOverpassDirectory(undefined, { fetch: fakeFetch(response).impl });
     await expect(dir.searchNearby({ services: ['plumber'], center, radiusM: 5000, limit: 5 })).rejects.toMatchObject({ name: 'MapsUnavailableError', service: 'directory' });
+  });
+});
+
+describe('Overpass mirrors', () => {
+  const center = { lat: 33.6557, lng: 73.0138 };
+  const MAIN = 'https://overpass-main.test/api/interpreter';
+  const MIRROR = 'https://overpass-mirror.test/api/interpreter';
+  const ok = () => json(200, { elements: [{ type: 'node', id: 9, lat: 33.657, lon: 73.015, tags: { name: 'Mirror Plumbing', craft: 'plumber' } }] });
+  const plumber = { services: ['plumber'], center, radiusM: 5000, limit: 20 };
+
+  function router(replies: Record<string, Array<Response | Error | 'hang'>>) {
+    const hits: string[] = [];
+    const queries: string[] = [];
+    const impl = async (url: string, init: RequestInit) => {
+      const host = new URL(url).host;
+      hits.push(host);
+      queries.push(new URLSearchParams(init.body as string).get('data') ?? '');
+      const next = replies[host].shift()!;
+      if (next === 'hang') {
+        // Like real fetch: reject when the AbortSignal fires.
+        return new Promise<Response>((_, reject) => init.signal!.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'TimeoutError' }))));
+      }
+      if (next instanceof Error) throw next;
+      return next;
+    };
+    return { hits, queries, impl };
+  }
+
+  it.each([
+    ['a 504', json(504, {})],
+    ['a 429', json(429, {})],
+    ['a network error', new TypeError('fetch failed')],
+    ['an Overpass timeout remark', json(200, { elements: [], remark: 'runtime error: Query timed out in "query" at line 3 after 6 seconds.' })],
+  ])('tries the mirror after %s on the main instance', async (_l, failure) => {
+    const log = memoryLogger();
+    const r = router({ 'overpass-main.test': [failure], 'overpass-mirror.test': [ok()] });
+    const places = await createOverpassDirectory([MAIN, MIRROR], { fetch: r.impl, log }).searchNearby(plumber);
+    expect(r.hits).toEqual(['overpass-main.test', 'overpass-mirror.test']);
+    expect(places.map((p) => p.id)).toEqual(['osm:node/9']);
+    expect(log.records.map((x) => x.event)).toEqual(['osm.mirror_failed', 'osm.mirror_used', 'osm.search']);
+  });
+
+  it('tries the mirror after a real per-attempt timeout', async () => {
+    const r = router({ 'overpass-main.test': ['hang'], 'overpass-mirror.test': [ok()] });
+    const t = Date.now();
+    const places = await createOverpassDirectory([MAIN, MIRROR], { fetch: r.impl, timeoutMs: 60, budgetMs: 5000 }).searchNearby(plumber);
+    expect(places).toHaveLength(1);
+    expect(Date.now() - t).toBeLessThan(2000);
+  });
+
+  it('does not call the mirror when the main instance answers (even with zero results)', async () => {
+    const r = router({ 'overpass-main.test': [json(200, { elements: [] })], 'overpass-mirror.test': [ok()] });
+    expect(await createOverpassDirectory([MAIN, MIRROR], { fetch: r.impl }).searchNearby(plumber)).toEqual([]);
+    expect(r.hits).toEqual(['overpass-main.test']);
+  });
+
+  it('gives up with one MapsUnavailableError when both fail, keeping status and timeout flag', async () => {
+    const r = router({ 'overpass-main.test': [json(503, {})], 'overpass-mirror.test': ['hang'] });
+    const err = await createOverpassDirectory([MAIN, MIRROR], { fetch: r.impl, timeoutMs: 50, budgetMs: 5000 }).searchNearby(plumber).catch((e) => e);
+    expect(err).toBeInstanceOf(MapsUnavailableError);
+    expect(err).toMatchObject({ service: 'directory', timedOut: true, message: 'directory timed out (2 Overpass instance(s) tried)' });
+  });
+
+  it('skips the mirror when the budget is spent, so the caller can still answer in time', async () => {
+    let clock = 0;
+    const r = router({ 'overpass-main.test': [json(504, {})], 'overpass-mirror.test': [ok()] });
+    const slow = async (url: string, init: RequestInit) => { clock += 11_000; return r.impl(url, init); };
+    const log = memoryLogger();
+    const err = await createOverpassDirectory([MAIN, MIRROR], { fetch: slow, timeoutMs: 8000, budgetMs: 12000, now: () => clock, log })
+      .searchNearby(plumber).catch((e) => e);
+    expect(err).toBeInstanceOf(MapsUnavailableError);
+    expect(r.hits).toEqual(['overpass-main.test']);
+    expect(log.records.find((x) => x.event === 'osm.mirror_skipped')).toMatchObject({ mirror: 'overpass-mirror.test', budget_left_ms: 1000 });
+  });
+
+  it('gives the mirror only what is left of the budget (server-side timeout shrinks too)', async () => {
+    let clock = 0;
+    const r = router({ 'overpass-main.test': [json(504, {})], 'overpass-mirror.test': [ok()] });
+    const timed = async (url: string, init: RequestInit) => { const res = await r.impl(url, init); clock += 7_000; return res; };
+    await createOverpassDirectory([MAIN, MIRROR], { fetch: timed, timeoutMs: 8000, budgetMs: 12000, now: () => clock }).searchNearby(plumber);
+    expect(r.queries[0]).toMatch(/^\[out:json\]\[timeout:6\];/); // 8 s attempt
+    expect(r.queries[1]).toMatch(/^\[out:json\]\[timeout:3\];/); // 5 s left of the 12 s budget
+  });
+});
+
+describe('Nominatim timeout', () => {
+  it('honours the configured timeout', async () => {
+    const hang = (_u: string, init: RequestInit) =>
+      new Promise<Response>((_, reject) => init.signal!.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'TimeoutError' }))));
+    const err = await createNominatimGeocoder(undefined, { fetch: hang, timeoutMs: 40 }).geocode('G-13').catch((e) => e);
+    expect(err).toMatchObject({ name: 'MapsUnavailableError', service: 'geocoder', timedOut: true, message: 'geocoder timed out' });
   });
 });
