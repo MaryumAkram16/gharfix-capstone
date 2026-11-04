@@ -7,6 +7,8 @@ import { emailSenderFromEnv } from './email/index.js';
 import { createLogger, type LogSink } from './log.js';
 import { recorderFromEnv } from './resilience/index.js';
 import { createMatchRoute } from './matching/deps.js';
+import { createReconcileRunner } from './reconcile/deps.js';
+import type { ReconcileRunner } from './reconcile/handler.js';
 
 // Wires the routes from environment variables. api/*.ts (Vercel) and
 // server.ts (local dev) both use this, so they behave the same.
@@ -23,6 +25,8 @@ export interface App {
   intent: LocalHandler;
   providerMatch: LocalHandler;
   proxy: (body: unknown, meta: RouteMeta) => Promise<HttpResult<unknown>>;
+  /** api/reconcile.ts: re-send unsent confirmations. Not reachable through /api/proxy. */
+  reconcile: ReconcileRunner;
 }
 
 export function createApp({ env = process.env, fetch, email, logSink }: AppOptions = {}): App {
@@ -37,10 +41,12 @@ export function createApp({ env = process.env, fetch, email, logSink }: AppOptio
   const forward = n8nBase ? createN8nForwarder({ baseUrl: n8nBase, fetch, log: log.child({ fn: 'proxy' }) }) : null;
 
   const local = { 'khadmat-booking': booking, 'khadmat-intent': intent, 'khadmat-provider-match': providerMatch };
+  const reconcile = createReconcileRunner({ env, fetch, email: mailer, recorder, log: log.child({ fn: 'reconcile' }) });
   return {
     booking,
     intent,
     providerMatch,
+    reconcile,
     proxy: (body, meta) => routeProxy(body, { local, forward, log }, meta),
   };
 }

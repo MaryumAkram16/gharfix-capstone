@@ -53,12 +53,17 @@ describe('api/ in plain Node ESM', () => {
       // No network needed: no Gemini key (keyword parser), and no services means no map lookup.
       const intent = await call('intent.js', { raw_message: 'hello' });
       const match = await call('provider-match.js', { location: 'G-13' });
+      const { GET: reconcile } = await import(${JSON.stringify(out)} + '/api/reconcile.js');
+      const r1 = await reconcile(new Request('https://gharfix.test/api/reconcile'));
+      process.env.CRON_SECRET = 'smoke-secret-not-real';
+      const r2 = await reconcile(new Request('https://gharfix.test/api/reconcile', { headers: { authorization: 'Bearer wrong' } }));
+      const reconcileStatus = [r1.status, r2.status];
       const { loadDemoDataset } = await import(${JSON.stringify(out)} + '/lib/matching/demo.js');
       const demo = (await loadDemoDataset()).providers.length;
-      console.log(JSON.stringify({ proxy, booking, intent, match, demo }));
+      console.log(JSON.stringify({ proxy, booking, intent, match, demo, reconcileStatus }));
     `;
     const env = Object.fromEntries(
-      Object.entries(process.env).filter(([k]) => !k.startsWith('SUPABASE_') && !k.startsWith('N8N_') && !k.startsWith('GMAIL_') && !k.startsWith('GEMINI_')),
+      Object.entries(process.env).filter(([k]) => !k.startsWith('SUPABASE_') && !k.startsWith('N8N_') && !k.startsWith('GMAIL_') && !k.startsWith('GEMINI_') && k !== 'CRON_SECRET'),
     );
     const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env });
 
@@ -74,5 +79,7 @@ describe('api/ in plain Node ESM', () => {
     expect(result.match).toEqual([200, expect.objectContaining({ status: 'error', message: 'No services found in match result' })]);
     // The demo seed loads through a JSON import attribute in plain Node ESM.
     expect(result.demo).toBeGreaterThanOrEqual(16);
+    // api/reconcile: 500 without CRON_SECRET, 401 with a wrong token.
+    expect(result.reconcileStatus).toEqual([500, 401]);
   }, 30_000);
 });
