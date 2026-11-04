@@ -5,6 +5,7 @@ import { transformMatchData, MatchViewData, ProviderCardData } from '../lib/tran
 import { BookingPayload } from './BookingView';
 import { AppLanguage } from '../App';
 import { getUserProfile } from '../lib/profile';
+import { pakistanToday } from '../lib/pakistanDate';
 
 interface MatchViewProps {
   data?: any;
@@ -351,7 +352,8 @@ export function MatchView({ data, onBook, appLanguage, onSearchAgain }: MatchVie
       || provider.availability_slots[0]
       || '09:00';
 
-    const today = new Date().toISOString().split('T')[0];
+    // Pakistan date, not UTC: from 00:00 to 04:59 PKT the UTC date is still yesterday.
+    const today = pakistanToday();
 
     const allProviders = [
       ...(uiData.top_provider_card ? [uiData.top_provider_card] : []),
