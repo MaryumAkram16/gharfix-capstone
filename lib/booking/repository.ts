@@ -56,6 +56,13 @@ export interface BookingRepository {
   findByIdempotencyKey(key: string): Promise<BookingRow | null>;
   /** Throws BookingConflictError on a unique violation, RepositoryError otherwise. */
   insert(row: NewBooking): Promise<BookingRow>;
+  /** Record that the confirmation email was delivered (db/002). No-op if already set. */
+  markConfirmationSent(bookingId: string, at: Date): Promise<void>;
+}
+
+/** For api/reconcile.ts: confirmed bookings whose confirmation email never went out. */
+export interface ReconcileReader {
+  findUnconfirmed(window: { createdBefore: Date; createdAfter: Date; limit: number }): Promise<BookingRow[]>;
 }
 
 /** Today's load per provider, for provider matching (WF2 "Fetch Provider Capacity"). */
@@ -144,11 +151,15 @@ export interface SupabaseRepositoryOptions {
   log?: Logger;
 }
 
-export function createSupabaseRepository(
-  config: SupabaseConfig,
-  { fetch: fetchImpl = fetch, log }: SupabaseRepositoryOptions = {},
-): BookingRepository & CapacityReader {
-  const endpoint = new URL('/rest/v1/bookings', config.url).toString();
+export type RestMethod = 'GET' | 'POST' | 'PATCH';
+
+export interface SupabaseRest {
+  /** One PostgREST call. Throws BookingConflictError on 23505/23P01, RepositoryError otherwise. */
+  request(table: string, method: RestMethod, params: URLSearchParams | null, body?: unknown, extra?: Record<string, string>): Promise<unknown>;
+}
+
+/** PostgREST over fetch with the service-role key (headers only), a timeout and typed errors. Shared by every table. */
+export function createSupabaseRest(config: SupabaseConfig, { fetch: fetchImpl = fetch }: { fetch?: FetchLike } = {}): SupabaseRest {
   const headers = {
     apikey: config.serviceRoleKey,
     Authorization: `Bearer ${config.serviceRoleKey}`,
@@ -156,45 +167,59 @@ export function createSupabaseRepository(
     Accept: 'application/json',
   };
 
-  async function request(method: 'GET' | 'POST', params: URLSearchParams | null, body?: unknown, extra?: Record<string, string>) {
-    const url = params ? `${endpoint}?${params.toString()}` : endpoint;
-    let res: Response;
-    try {
-      res = await fetchImpl(url, {
-        method,
-        headers: { ...headers, ...extra },
-        body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(config.timeoutMs),
-      });
-    } catch (err) {
-      const reason = err instanceof Error && err.name === 'TimeoutError' ? 'timed out' : 'network error';
-      throw new RepositoryError('unavailable', `Supabase ${method} ${reason}`);
-    }
-
-    if (res.ok) {
+  return {
+    async request(table, method, params, body, extra) {
+      const endpoint = new URL(`/rest/v1/${encodeURIComponent(table)}`, config.url).toString();
+      const url = params ? `${endpoint}?${params.toString()}` : endpoint;
+      let res: Response;
       try {
-        return (await res.json()) as unknown;
-      } catch {
-        throw new RepositoryError('unexpected', `Supabase ${method} returned a non-JSON body`, res.status);
+        res = await fetchImpl(url, {
+          method,
+          headers: { ...headers, ...extra },
+          body: body === undefined ? undefined : JSON.stringify(body),
+          signal: AbortSignal.timeout(config.timeoutMs),
+        });
+      } catch (err) {
+        const reason = err instanceof Error && err.name === 'TimeoutError' ? 'timed out' : 'network error';
+        throw new RepositoryError('unavailable', `Supabase ${method} ${reason}`);
       }
-    }
 
-    let pg: PostgrestError = {};
-    try {
-      pg = (await res.json()) as PostgrestError;
-    } catch {
-      // Gateways in front of Supabase answer 5xx with HTML; the status is enough.
-    }
+      if (res.ok) {
+        // Prefer: return=minimal answers 204 with no body.
+        if (res.status === 204) return null;
+        try {
+          return (await res.json()) as unknown;
+        } catch {
+          throw new RepositoryError('unexpected', `Supabase ${method} returned a non-JSON body`, res.status);
+        }
+      }
 
-    if (pg.code === '23505' || pg.code === '23P01') {
-      const constraint = CONSTRAINT_IN_MESSAGE.exec(pg.message ?? '')?.[1] ?? null;
-      // 23P01 is an exclusion constraint: only ever used for slot overlaps.
-      const target = pg.code === '23P01' ? 'slot' : conflictTarget(constraint);
-      throw new BookingConflictError(target, constraint, pg.code);
-    }
-    const kind = res.status >= 500 || res.status === 429 || res.status === 408 ? 'unavailable' : 'unexpected';
-    throw new RepositoryError(kind, `Supabase ${method} failed with HTTP ${res.status}`, res.status, pg.code ?? null);
-  }
+      let pg: PostgrestError = {};
+      try {
+        pg = (await res.json()) as PostgrestError;
+      } catch {
+        // Gateways in front of Supabase answer 5xx with HTML; the status is enough.
+      }
+
+      if (pg.code === '23505' || pg.code === '23P01') {
+        const constraint = CONSTRAINT_IN_MESSAGE.exec(pg.message ?? '')?.[1] ?? null;
+        // 23P01 is an exclusion constraint: only ever used for slot overlaps.
+        const target = pg.code === '23P01' ? 'slot' : conflictTarget(constraint);
+        throw new BookingConflictError(target, constraint, pg.code);
+      }
+      const kind = res.status >= 500 || res.status === 429 || res.status === 408 ? 'unavailable' : 'unexpected';
+      throw new RepositoryError(kind, `Supabase ${method} failed with HTTP ${res.status}`, res.status, pg.code ?? null);
+    },
+  };
+}
+
+export function createSupabaseRepository(
+  config: SupabaseConfig,
+  { fetch: fetchImpl = fetch, log }: SupabaseRepositoryOptions = {},
+): BookingRepository & CapacityReader & ReconcileReader {
+  const rest = createSupabaseRest(config, { fetch: fetchImpl });
+  const request = (method: RestMethod, params: URLSearchParams | null, body?: unknown, extra?: Record<string, string>) =>
+    rest.request('bookings', method, params, body, extra);
 
   return {
     async bookedSlots(providerId, dates) {
@@ -232,6 +257,29 @@ export function createSupabaseRepository(
         throw new RepositoryError('unexpected', 'Supabase POST did not return the inserted row');
       }
       return rows[0];
+    },
+
+    async markConfirmationSent(bookingId, at) {
+      // Only if still unset: the first successful send wins, and repeats change nothing.
+      const params = new URLSearchParams({ booking_id: `eq.${bookingId}`, confirmation_sent_at: 'is.null' });
+      await request('PATCH', params, { confirmation_sent_at: at.toISOString() }, { Prefer: 'return=minimal' });
+    },
+
+    async findUnconfirmed({ createdBefore, createdAfter, limit }) {
+      const params = new URLSearchParams({
+        select: '*',
+        status: 'eq.confirmed',
+        confirmation_sent_at: 'is.null',
+        user_email: 'like.*@*',
+        order: 'created_at.asc',
+        limit: String(limit),
+      });
+      // Two filters on one column are ANDed by PostgREST.
+      params.append('created_at', `lt.${createdBefore.toISOString()}`);
+      params.append('created_at', `gt.${createdAfter.toISOString()}`);
+      const rows = (await request('GET', params)) as BookingRow[];
+      if (!Array.isArray(rows)) throw new RepositoryError('unexpected', 'Supabase GET returned a non-array body');
+      return rows;
     },
 
     async activeBookingCounts(date, providerIds) {

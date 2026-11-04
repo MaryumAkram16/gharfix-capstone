@@ -8,6 +8,7 @@ import type { EmailMessage, EmailSender } from './types.js';
  */
 export function createConsoleSender(log: Logger): EmailSender {
   return {
+    logsOnly: true,
     async send(message: EmailMessage) {
       log.info('email.console', { to: message.to, subject: message.subject, text_length: message.text.length });
     },

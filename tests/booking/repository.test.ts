@@ -159,6 +159,36 @@ describe('insert', () => {
   });
 });
 
+describe('markConfirmationSent', () => {
+  it('PATCHes only a row that has no timestamp yet, and accepts the empty 204', async () => {
+    const f = fakeFetch(new Response(null, { status: 204 }));
+    await createSupabaseRepository(config, { fetch: f.impl }).markConfirmationSent('BK-TEST-0001', new Date('2026-11-04T09:00:00Z'));
+    const { url, init } = f.calls[0];
+    expect(init.method).toBe('PATCH');
+    expect(url.pathname).toBe('/rest/v1/bookings');
+    expect(Object.fromEntries(url.searchParams)).toEqual({ booking_id: 'eq.BK-TEST-0001', confirmation_sent_at: 'is.null' });
+    expect(JSON.parse(init.body as string)).toEqual({ confirmation_sent_at: '2026-11-04T09:00:00.000Z' });
+    expect(init.headers).toMatchObject({ Prefer: 'return=minimal' });
+  });
+});
+
+describe('findUnconfirmed', () => {
+  it('asks for confirmed, unsent, recent bookings with an address, oldest first', async () => {
+    const f = fakeFetch(json(200, [{ booking_id: 'BK-TEST-0001' }]));
+    const rows = await createSupabaseRepository(config, { fetch: f.impl }).findUnconfirmed({
+      createdBefore: new Date('2026-11-04T08:55:00Z'), createdAfter: new Date('2026-11-03T09:00:00Z'), limit: 50,
+    });
+    expect(rows).toEqual([{ booking_id: 'BK-TEST-0001' }]);
+    const p = f.calls[0].url.searchParams;
+    expect(p.get('status')).toBe('eq.confirmed');
+    expect(p.get('confirmation_sent_at')).toBe('is.null');
+    expect(p.get('user_email')).toBe('like.*@*');
+    expect(p.getAll('created_at')).toEqual(['lt.2026-11-04T08:55:00.000Z', 'gt.2026-11-03T09:00:00.000Z']);
+    expect(p.get('order')).toBe('created_at.asc');
+    expect(p.get('limit')).toBe('50');
+  });
+});
+
 describe('activeBookingCounts', () => {
   it('counts active bookings per provider for one date', async () => {
     const f = fakeFetch(json(200, [{ provider_id: 'osm:node/1' }, { provider_id: 'osm:node/1' }, { provider_id: 'osm:way/2' }]));

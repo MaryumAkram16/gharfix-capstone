@@ -27,6 +27,14 @@ function fakePostgrest() {
       );
       return Response.json(found);
     }
+    if (init.method === 'PATCH') {
+      // markConfirmationSent: booking_id=eq.X & confirmation_sent_at=is.null
+      const patch = JSON.parse(init.body as string) as Row;
+      for (const r of rows) {
+        if (`eq.${r.booking_id}` === url.searchParams.get('booking_id') && !r.confirmation_sent_at) Object.assign(r, patch);
+      }
+      return new Response(null, { status: 204 });
+    }
     const row = JSON.parse(init.body as string) as Row;
     if (rows.some((r) => r.provider_id === row.provider_id && r.booking_date === row.booking_date && r.slot === row.slot)) {
       return Response.json({ code: '23505', message: 'duplicate key value violates unique constraint "bookings_active_slot_key"' }, { status: 409 });
@@ -65,6 +73,9 @@ describe('createApp', () => {
     expect(pg.rows).toHaveLength(1);
     expect(pg.rows[0]).toMatchObject({ slot: '16:00', idempotency_key: 'idem-test-app-0001' });
     expect(sent).toEqual(['booking-test@example.test']);
+    // A real send records confirmation_sent_at (db/002), through PATCH ... confirmation_sent_at=is.null.
+    expect(pg.rows[0].confirmation_sent_at).toEqual(expect.any(String));
+    expect(pg.calls).toContain('PATCH /rest/v1/bookings');
 
     const replay = await app.proxy(confirm, { requestId: 'req-2' });
     expect(replay.status).toBe(200);
@@ -109,11 +120,14 @@ describe('createApp', () => {
     const res = await app.proxy(confirm, { requestId: 'req-email' });
 
     expect(res.status).toBe(200);
-    expect(logs.map((r) => r.event)).toEqual(['email.sender', 'booking.confirmed', 'email.console', 'booking.email_sent']);
+    expect(logs.map((r) => r.event)).toEqual(['email.sender', 'booking.confirmed', 'email.console', 'booking.email_logged_only']);
     const bookingId = (res.body as Row).booking_id as string;
     // The sender is built once per instance, so its own line is tied to the request by booking id;
-    // the handler's email_sent line carries the request id.
+    // the handler's line carries the request id.
     expect(logs.find((r) => r.event === 'email.console')).toMatchObject({ to: 'b***@example.test', subject: expect.stringContaining(bookingId) });
-    expect(logs.find((r) => r.event === 'booking.email_sent')).toMatchObject({ booking_id: bookingId, request_id: 'req-email' });
+    expect(logs.find((r) => r.event === 'booking.email_logged_only')).toMatchObject({ booking_id: bookingId, request_id: 'req-email' });
+    // Only logged, so not recorded as sent: the reconciler will still deliver it once SMTP is configured.
+    expect(pg.rows[0].confirmation_sent_at).toBeUndefined();
+    expect(pg.calls).not.toContain('PATCH /rest/v1/bookings');
   });
 });

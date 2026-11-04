@@ -318,3 +318,48 @@ describe('defaultBookingId', () => {
     expect(defaultBookingId(NOW)).toMatch(/^BK-2026-1793782800000-\d{3}$/);
   });
 });
+
+describe('confirmation_sent_at (db/002)', () => {
+  it('is set when the email is actually sent', async () => {
+    const res = await handleBookingRequest(confirmBody, deps);
+    expect(res.status).toBe(200);
+    expect(db.rows[0].confirmation_sent_at).toBe(NOW.toISOString());
+    expect(db.calls).toContain('markConfirmationSent');
+  });
+
+  it('stays null when the email fails, so the reconciler resends it', async () => {
+    email.behaviour = 'fail';
+    await handleBookingRequest(confirmBody, deps);
+    expect(db.rows[0].confirmation_sent_at).toBeUndefined();
+    expect(db.calls).not.toContain('markConfirmationSent');
+  });
+
+  it('stays null when the sender only logs (console fallback)', async () => {
+    deps.email = { logsOnly: true, send: async () => {} };
+    await handleBookingRequest(confirmBody, deps);
+    expect(db.rows[0].confirmation_sent_at).toBeUndefined();
+    expect(events()).toContain('booking.email_logged_only');
+  });
+
+  it('stays null without an email address', async () => {
+    await handleBookingRequest({ ...confirmBody, user_email: '' }, deps);
+    expect(db.calls).not.toContain('markConfirmationSent');
+  });
+
+  it('a failure to record it does not affect the booking', async () => {
+    db.failWhen = (op) => op === 'markConfirmationSent';
+    const res = await handleBookingRequest(confirmBody, deps);
+    expect(res.status).toBe(200);
+    expect(email.sent).toHaveLength(1);
+    expect(events()).toContain('booking.confirmation_mark_failed');
+  });
+
+  it('is not touched by an idempotent replay', async () => {
+    const keyed = { ...confirmBody, idempotency_key: 'idem-test-sent-01' };
+    await handleBookingRequest(keyed, deps);
+    const marks = db.calls.filter((c) => c === 'markConfirmationSent').length;
+    await handleBookingRequest(keyed, deps);
+    expect(db.calls.filter((c) => c === 'markConfirmationSent')).toHaveLength(marks);
+    expect(email.sent).toHaveLength(1);
+  });
+});

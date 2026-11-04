@@ -67,7 +67,7 @@ function toIsoUtc(value: unknown, fallback: Date): string {
 }
 
 /** Fresh bookings and replays both build the receipt from the stored row, so they match exactly. */
-function receiptFromRow(row: BookingRow, now: Date): Receipt {
+export function receiptFromRow(row: BookingRow, now: Date): Receipt {
   return buildReceipt({
     bookingId: row.booking_id,
     serviceType: row.service_type ?? '',
@@ -207,19 +207,48 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-/** Best effort: the booking is already committed, so an email problem is logged, never returned. */
-async function sendConfirmation(receipt: Receipt, deps: BookingDeps, log: Logger): Promise<void> {
+export type DeliveryResult = 'sent' | 'logged' | 'failed' | 'skipped';
+
+export interface DeliveryDeps {
+  db: Pick<BookingRepository, 'markConfirmationSent'>;
+  email: EmailSender;
+  now: () => Date;
+  emailTimeoutMs?: number;
+}
+
+/**
+ * Sends the confirmation email and, only when it really went out over SMTP,
+ * records bookings.confirmation_sent_at. Never throws: the booking is already
+ * committed. "failed" bookings are picked up again by api/reconcile.ts.
+ *   sent    - accepted by SMTP and recorded
+ *   logged  - console fallback: nothing reached the customer, not recorded
+ *   failed  - SMTP error or timeout (not retried here: a retry could email twice)
+ *   skipped - the customer gave no address
+ */
+export async function deliverConfirmation(receipt: Receipt, deps: DeliveryDeps, log: Logger): Promise<DeliveryResult> {
   const message = confirmationEmail(receipt);
   if (!message) {
     log.info('booking.email_skipped', { booking_id: receipt.booking_id, reason: 'no_address' });
-    return;
+    return 'skipped';
   }
   try {
     await withTimeout(Promise.resolve().then(() => deps.email.send(message)), deps.emailTimeoutMs ?? DEFAULT_EMAIL_TIMEOUT_MS);
-    log.info('booking.email_sent', { booking_id: receipt.booking_id });
   } catch (err) {
     log.error('booking.email_failed', { booking_id: receipt.booking_id, to: message.to, error: err });
+    return 'failed';
   }
+  if (deps.email.logsOnly) {
+    log.info('booking.email_logged_only', { booking_id: receipt.booking_id });
+    return 'logged';
+  }
+  log.info('booking.email_sent', { booking_id: receipt.booking_id });
+  try {
+    await deps.db.markConfirmationSent(receipt.booking_id, deps.now());
+  } catch (err) {
+    // The email did go out; the reconciler may send it once more. Logged, not returned.
+    log.error('booking.confirmation_mark_failed', { booking_id: receipt.booking_id, error: err });
+  }
+  return 'sent';
 }
 
 async function confirm(body: unknown, deps: BookingDeps): Promise<HttpResult> {
@@ -279,7 +308,7 @@ async function confirm(body: unknown, deps: BookingDeps): Promise<HttpResult> {
 
   const receipt = receiptFromRow(row, deps.now());
   log.info('booking.confirmed', { booking_id: receipt.booking_id });
-  await sendConfirmation(receipt, deps, log);
+  await deliverConfirmation(receipt, deps, log);
   return ok(confirmedBody(row, deps.now(), false));
 }
 

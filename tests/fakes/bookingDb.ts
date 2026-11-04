@@ -1,16 +1,16 @@
 import {
   ACTIVE_STATUSES, BookingConflictError, CONSTRAINTS, RepositoryError,
-  type BookingRepository, type BookingRow, type NewBooking,
+  type BookingRepository, type BookingRow, type NewBooking, type ReconcileReader,
 } from '../../lib/booking/repository';
 import { normaliseSlot } from '../../lib/booking/slot';
 
-type Op = 'bookedSlots' | 'findByIdempotencyKey' | 'insert';
+type Op = 'bookedSlots' | 'findByIdempotencyKey' | 'insert' | 'markConfirmationSent' | 'findUnconfirmed';
 
 /**
  * In-memory bookings table that enforces the same unique rules as Postgres:
  * booking_id, idempotency_key, and one active booking per provider/date/slot.
  */
-export class FakeBookingDb implements BookingRepository {
+export class FakeBookingDb implements BookingRepository, ReconcileReader {
   rows: BookingRow[] = [];
   calls: Op[] = [];
   /** Return true to make that call fail as if Supabase were unreachable. */
@@ -68,6 +68,24 @@ export class FakeBookingDb implements BookingRepository {
     const stored = structuredClone(row) as BookingRow;
     this.rows.push(stored);
     return structuredClone(stored);
+  }
+
+  async markConfirmationSent(bookingId: string, at: Date) {
+    this.enter('markConfirmationSent');
+    const row = this.rows.find((r) => r.booking_id === bookingId);
+    // Same as the PATCH filter confirmation_sent_at=is.null: first write wins.
+    if (row && !row.confirmation_sent_at) row.confirmation_sent_at = at.toISOString();
+  }
+
+  async findUnconfirmed({ createdBefore, createdAfter, limit }: { createdBefore: Date; createdAfter: Date; limit: number }) {
+    this.enter('findUnconfirmed');
+    return structuredClone(
+      this.rows
+        .filter((r) => r.status === 'confirmed' && !r.confirmation_sent_at && typeof r.user_email === 'string' && r.user_email.includes('@'))
+        .filter((r) => { const t = Date.parse(String(r.created_at)); return t < createdBefore.getTime() && t > createdAfter.getTime(); })
+        .sort((a, b) => Date.parse(String(a.created_at)) - Date.parse(String(b.created_at)))
+        .slice(0, limit),
+    );
   }
 
   async insert(row: NewBooking) {

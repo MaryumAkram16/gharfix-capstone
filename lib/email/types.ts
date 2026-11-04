@@ -12,4 +12,6 @@ export interface EmailMessage {
 export interface EmailSender {
   /** Resolves when the message is accepted for delivery; rejects otherwise. */
   send(message: EmailMessage): Promise<void>;
+  /** True for senders that only log (console fallback): nothing reaches the customer. */
+  readonly logsOnly?: boolean;
 }
