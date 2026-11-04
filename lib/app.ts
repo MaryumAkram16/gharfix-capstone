@@ -1,5 +1,5 @@
 import { createBookingRoute, type Env, type FetchLike } from './booking/deps.js';
-import type { EmailSender } from './booking/handler.js';
+import type { EmailSender } from './email/types.js';
 import type { HttpResult } from './http/errors.js';
 import { createN8nForwarder, routeProxy, type LocalHandler, type RouteMeta } from './http/proxy.js';
 import { createLogger, type LogSink } from './log.js';

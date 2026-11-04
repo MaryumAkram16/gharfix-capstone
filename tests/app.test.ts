@@ -100,4 +100,20 @@ describe('createApp', () => {
     expect((await withN8n.proxy({ endpoint: 'khadmat-intent' }, { requestId: null })).status).toBe(200);
     expect(seen).toEqual(['https://n8n.test/webhook/khadmat-intent']);
   });
+
+  it('uses the console email fallback when GMAIL_* is not set, and the booking still confirms', async () => {
+    const pg = fakePostgrest();
+    const logs: LogRecord[] = [];
+    const app = createApp({ env, fetch: pg.fetch, logSink: (r) => logs.push(r) });
+
+    const res = await app.proxy(confirm, { requestId: 'req-email' });
+
+    expect(res.status).toBe(200);
+    expect(logs.map((r) => r.event)).toEqual(['email.sender', 'booking.confirmed', 'email.console', 'booking.email_sent']);
+    const bookingId = (res.body as Row).booking_id as string;
+    // The sender is built once per instance, so its own line is tied to the request by booking id;
+    // the handler's email_sent line carries the request id.
+    expect(logs.find((r) => r.event === 'email.console')).toMatchObject({ to: 'b***@example.test', subject: expect.stringContaining(bookingId) });
+    expect(logs.find((r) => r.event === 'booking.email_sent')).toMatchObject({ booking_id: bookingId, request_id: 'req-email' });
+  });
 });

@@ -1,7 +1,8 @@
 import { createHash, randomInt } from 'node:crypto';
 import { fail, internalError, ok, serviceUnavailable, validationError, type HttpResult } from '../http/errors.js';
 import type { Logger } from '../log.js';
-import { buildReceipt, confirmationEmail, type EmailMessage, type Receipt } from './receipt.js';
+import type { EmailSender } from '../email/types.js';
+import { buildReceipt, confirmationEmail, type Receipt } from './receipt.js';
 import {
   BookingConflictError, RepositoryError, type BookingRepository, type BookingRow, type NewBooking,
 } from './repository.js';
@@ -15,9 +16,7 @@ import { validateConfirm, validateGetSlots, type ConfirmRequest, type Validated 
 // khadmat-booking (WF4) without n8n: get_slots and confirm.
 // Everything with side effects comes in through BookingDeps.
 
-export interface EmailSender {
-  send(message: EmailMessage): Promise<void>;
-}
+export type { EmailSender };
 
 export interface BookingDeps {
   db: BookingRepository;

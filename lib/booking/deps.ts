@@ -2,7 +2,8 @@ import type { HttpResult } from '../http/errors.js';
 import { internalError } from '../http/errors.js';
 import type { LocalHandler } from '../http/proxy.js';
 import type { Logger } from '../log.js';
-import { defaultBookingId, handleBookingRequest, type BookingDeps, type EmailSender } from './handler.js';
+import { emailSenderFromEnv, type EmailSender } from '../email/index.js';
+import { defaultBookingId, handleBookingRequest, type BookingDeps } from './handler.js';
 import { createSupabaseRepository, supabaseConfigFromEnv } from './repository.js';
 
 export type Env = Record<string, string | undefined>;
@@ -15,21 +16,12 @@ export interface BookingDepsOptions {
   email?: EmailSender;
 }
 
-/** Until a real sender is configured, record that an email would have gone out. */
-function logOnlyEmail(log: Logger): EmailSender {
-  return {
-    async send(message) {
-      log.warn('email.not_configured', { to: message.to, subject: message.subject });
-    },
-  };
-}
-
 /** Real dependencies from environment variables. Throws (naming the variable) if Supabase is not configured. */
 export function createBookingDeps({ env, log, fetch, email }: BookingDepsOptions): BookingDeps {
   const db = createSupabaseRepository(supabaseConfigFromEnv(env), { fetch, log });
   return {
     db,
-    email: email ?? logOnlyEmail(log),
+    email: email ?? emailSenderFromEnv(env, log),
     newBookingId: defaultBookingId,
     now: () => new Date(),
     log,

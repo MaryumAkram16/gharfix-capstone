@@ -1,3 +1,4 @@
+import type { EmailMessage } from '../email/types.js';
 import { slotLabel } from './slot.js';
 
 // The confirmation receipt and email, field for field as WF4 "Generate
@@ -81,12 +82,7 @@ export function buildReceipt(b: ReceiptInput): Receipt {
   };
 }
 
-export interface EmailMessage {
-  to: string;
-  subject: string;
-  html: string;
-  text: string;
-}
+export type { EmailMessage };
 
 export function escapeHtml(value: string): string {
   return value
