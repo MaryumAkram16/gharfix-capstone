@@ -1,35 +1,26 @@
-import axios from "axios";
-import _axiosRetry from "axios-retry";
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import "dotenv/config";
+import { createApp } from "./lib/app.js";
+import type { HttpResult } from "./lib/http/errors.js";
+import { validationError } from "./lib/http/errors.js";
 
-// Fix for axios-retry when bundled as CJS
-const axiosRetry = (typeof _axiosRetry === 'function' ? _axiosRetry : (_axiosRetry as any).default) as typeof _axiosRetry;
+// Local dev server. /api/proxy and /api/booking run the same code as the
+// Vercel functions in api/ (lib/app.ts). Requests forwarded to n8n are sent
+// once and never retried: they are all POSTs, and a retried booking or
+// reschedule could happen twice.
 
-// Configure axios retries
-if (typeof axiosRetry === 'function') {
-  axiosRetry(axios, { 
-    retries: 3, 
-    retryDelay: (retryCount) => {
-      console.log(`[Proxy] Retry attempt #${retryCount}...`);
-      return retryCount * 1000; // time interval between retries
-    },
-    retryCondition: (error: any) => {
-      // Retry on network errors or DNS errors (like EAI_AGAIN)
-      return (axiosRetry as any).isNetworkOrIdempotentRequestError?.(error) || 
-             error.code === 'EAI_AGAIN' || 
-             error.code === 'ECONNRESET';
-    }
-  });
-} else {
-  console.error("[Proxy] Critical: axiosRetry is not a function", typeof axiosRetry);
+function send(res: express.Response, result: HttpResult<unknown>) {
+  res.status(result.status).set("Cache-Control", "no-store");
+  if (typeof result.body === "string") res.type("text/plain").send(result.body);
+  else res.json(result.body);
 }
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
+  const gharfix = createApp();
 
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
@@ -46,66 +37,20 @@ async function startServer() {
     }
   });
 
-
   // API Proxy Route for Webhooks
   app.post("/api/proxy", async (req, res) => {
-    const { endpoint, ...body } = req.body;
-    console.log(`[Proxy] Request received for endpoint: ${endpoint}`);
-    
-    if (!endpoint) {
-      console.error("[Proxy] Error: Missing endpoint in request body");
-      return res.status(400).json({ error: "Endpoint is required" });
-    }
+    send(res, await gharfix.proxy(req.body, { requestId: null }));
+  });
 
-    const N8N_BASE = process.env.N8N_WEBHOOK_BASE_URL || "https://n8ndigitalstudio.duckdns.org/webhook";
-    const url = `${N8N_BASE}/${endpoint}`;
-    
-    // Duplicate message field for better n8n compatibility. 
-    const enrichedBody = {
-      ...body,
-      message: body.message || body.raw_message || "",
-      timestamp: new Date().toISOString(),
-      agent_id: "khidmatgaar_v1"
-    };
+  app.post("/api/booking", async (req, res) => {
+    const body = req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body : {};
+    send(res, await gharfix.booking(body, { requestId: null }));
+  });
 
-    console.log(`[Proxy] Forwarding to: ${url}`);
-    console.log(`[Proxy] Payload keys: ${Object.keys(enrichedBody).join(", ")}`);
-
-    try {
-      const response = await axios.post(url, enrichedBody, {
-        timeout: 30000, // 30s timeout for n8n
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-        },
-        // Handle all status codes to prevent axios from throwing on 4xx/5xx
-        validateStatus: () => true 
-      });
-
-      console.log(`[Proxy] Response from ${endpoint}: Status ${response.status}`);
-      
-      // Return whatever the webhook returned
-      if (typeof response.data === 'object' && response.data !== null) {
-        return res.status(response.status).json(response.data);
-      } else {
-        return res.status(response.status).send(response.data);
-      }
-    } catch (error: any) {
-      const isTimeout = error.code === 'ECONNABORTED' || error.message.includes('timeout');
-      console.error(`[Proxy] ${isTimeout ? 'Timeout' : 'Critical Error'} for ${endpoint}: ${error.message}`);
-      
-      if (error.response) {
-        console.error(`[Proxy] Error data:`, error.response.data);
-        return res.status(error.response.status).send(error.response.data);
-      }
-
-      res.status(isTimeout ? 504 : 500).json({
-        error: isTimeout ? "Webhook Timeout" : "Failed to forward request",
-        details: error.message,
-        code: error.code,
-        endpoint,
-      });
-    }
+  // Malformed JSON: answer like the Vercel functions instead of Express's HTML error page.
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err?.type === "entity.parse.failed") return send(res, validationError("Request body must be valid JSON", ["body"]));
+    next(err);
   });
 
   // Health check

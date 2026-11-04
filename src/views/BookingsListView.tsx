@@ -37,11 +37,18 @@ export interface SavedBooking {
 
 const STORAGE_KEY = 'khidmatgaar_bookings';
 
+const SAVED_STATUSES: SavedBooking['status'][] = ['confirmed', 'pending', 'completed', 'cancelled', 'rescheduled'];
+
+/** Saves a server-confirmed booking. Without a real booking_id nothing is saved: ids are never made up here. */
 export function saveBookingToStorage(receipt: any, payload: any) {
+  if (typeof receipt?.booking_id !== 'string' || receipt.booking_id.trim() === '') {
+    console.error('Not saving a booking without a booking_id');
+    return;
+  }
   try {
     const existing = getBookingsFromStorage();
     const booking: SavedBooking = {
-      booking_id: receipt.booking_id || `BK-${Date.now()}`,
+      booking_id: receipt.booking_id,
       provider_name: receipt.provider?.name || payload?.provider_name || 'Provider',
       provider_id: payload?.provider_id || receipt.provider?.id || '',
       service_type: receipt.service || payload?.service_type || 'Service',
@@ -49,7 +56,8 @@ export function saveBookingToStorage(receipt: any, payload: any) {
       slot: receipt.appointment?.time_label || receipt.appointment?.time || payload?.slot || '',
       booking_date: receipt.appointment?.date || payload?.booking_date || '',
       price_pkr: receipt.payment?.estimated_pkr || payload?.price_pkr || 0,
-      status: 'confirmed',
+      // A replayed confirm reports the booking's current status (it may have been cancelled since).
+      status: SAVED_STATUSES.includes(receipt.booking_status) ? receipt.booking_status : 'confirmed',
       saved_at: new Date().toISOString(),
       next_steps: receipt.next_steps || [],
       alternatives: payload?.alternatives || receipt.alternatives || [],

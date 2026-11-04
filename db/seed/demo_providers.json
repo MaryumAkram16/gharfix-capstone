@@ -1,0 +1,291 @@
+{
+  "_notice": "DEMO DATA - fictional sample providers. These are NOT real businesses: names and addresses are made up, and coordinates are only placed near real area centres. GharFix uses this file only when the server runs with USE_DEMO_PROVIDERS=1 and OpenStreetMap returns no providers near the customer. Every response built from it has data_source \"demo_seed\" and the app shows a \"Demo data\" label. No ratings, reviews or prices are included.",
+  "dataset": "gharfix-demo-providers",
+  "version": 1,
+  "providers": [
+    {
+      "id": "demo:lhr-johar-home",
+      "name": "[DEMO] Johar Town Home Repairs",
+      "city": "Lahore",
+      "area": "Johar Town",
+      "lat": 31.4718,
+      "lng": 74.2745,
+      "services": [
+        "plumber",
+        "electrician",
+        "AC repair",
+        "carpenter",
+        "painter"
+      ],
+      "address": "Demo listing, Johar Town, Lahore"
+    },
+    {
+      "id": "demo:lhr-johar-appliance",
+      "name": "[DEMO] Johar Town Appliance & Pest Care",
+      "city": "Lahore",
+      "area": "Johar Town",
+      "lat": 31.4679,
+      "lng": 74.2705,
+      "services": [
+        "fridge repair",
+        "washing machine repair",
+        "phone repair",
+        "pest control",
+        "deep cleaning"
+      ],
+      "address": "Demo listing, Johar Town, Lahore"
+    },
+    {
+      "id": "demo:lhr-dha5-home",
+      "name": "[DEMO] DHA Phase 5 Home Repairs",
+      "city": "Lahore",
+      "area": "DHA Phase 5",
+      "lat": 31.4647,
+      "lng": 74.41,
+      "services": [
+        "plumber",
+        "electrician",
+        "AC repair",
+        "carpenter",
+        "painter"
+      ],
+      "address": "Demo listing, DHA Phase 5, Lahore"
+    },
+    {
+      "id": "demo:lhr-dha5-appliance",
+      "name": "[DEMO] DHA Phase 5 Appliance & Pest Care",
+      "city": "Lahore",
+      "area": "DHA Phase 5",
+      "lat": 31.4608,
+      "lng": 74.406,
+      "services": [
+        "fridge repair",
+        "washing machine repair",
+        "phone repair",
+        "pest control",
+        "deep cleaning"
+      ],
+      "address": "Demo listing, DHA Phase 5, Lahore"
+    },
+    {
+      "id": "demo:lhr-gulberg-home",
+      "name": "[DEMO] Gulberg III Home Repairs",
+      "city": "Lahore",
+      "area": "Gulberg III",
+      "lat": 31.5186,
+      "lng": 74.3506,
+      "services": [
+        "plumber",
+        "electrician",
+        "AC repair",
+        "carpenter",
+        "painter"
+      ],
+      "address": "Demo listing, Gulberg III, Lahore"
+    },
+    {
+      "id": "demo:lhr-gulberg-appliance",
+      "name": "[DEMO] Gulberg III Appliance & Pest Care",
+      "city": "Lahore",
+      "area": "Gulberg III",
+      "lat": 31.5147,
+      "lng": 74.3466,
+      "services": [
+        "fridge repair",
+        "washing machine repair",
+        "phone repair",
+        "pest control",
+        "deep cleaning"
+      ],
+      "address": "Demo listing, Gulberg III, Lahore"
+    },
+    {
+      "id": "demo:lhr-modeltown-home",
+      "name": "[DEMO] Model Town Home Repairs",
+      "city": "Lahore",
+      "area": "Model Town",
+      "lat": 31.4857,
+      "lng": 74.3256,
+      "services": [
+        "plumber",
+        "electrician",
+        "AC repair",
+        "carpenter",
+        "painter"
+      ],
+      "address": "Demo listing, Model Town, Lahore"
+    },
+    {
+      "id": "demo:lhr-modeltown-appliance",
+      "name": "[DEMO] Model Town Appliance & Pest Care",
+      "city": "Lahore",
+      "area": "Model Town",
+      "lat": 31.4818,
+      "lng": 74.3216,
+      "services": [
+        "fridge repair",
+        "washing machine repair",
+        "phone repair",
+        "pest control",
+        "deep cleaning"
+      ],
+      "address": "Demo listing, Model Town, Lahore"
+    },
+    {
+      "id": "demo:isb-g13-home",
+      "name": "[DEMO] G-13 Home Repairs",
+      "city": "Islamabad",
+      "area": "G-13",
+      "lat": 33.6578,
+      "lng": 73.0155,
+      "services": [
+        "plumber",
+        "electrician",
+        "AC repair",
+        "carpenter",
+        "painter"
+      ],
+      "address": "Demo listing, G-13, Islamabad"
+    },
+    {
+      "id": "demo:isb-g13-appliance",
+      "name": "[DEMO] G-13 Appliance & Pest Care",
+      "city": "Islamabad",
+      "area": "G-13",
+      "lat": 33.6539,
+      "lng": 73.0115,
+      "services": [
+        "fridge repair",
+        "washing machine repair",
+        "phone repair",
+        "pest control",
+        "deep cleaning"
+      ],
+      "address": "Demo listing, G-13, Islamabad"
+    },
+    {
+      "id": "demo:isb-f10-home",
+      "name": "[DEMO] F-10 Home Repairs",
+      "city": "Islamabad",
+      "area": "F-10",
+      "lat": 33.7097,
+      "lng": 73.0304,
+      "services": [
+        "plumber",
+        "electrician",
+        "AC repair",
+        "carpenter",
+        "painter"
+      ],
+      "address": "Demo listing, F-10, Islamabad"
+    },
+    {
+      "id": "demo:isb-f10-appliance",
+      "name": "[DEMO] F-10 Appliance & Pest Care",
+      "city": "Islamabad",
+      "area": "F-10",
+      "lat": 33.7058,
+      "lng": 73.0264,
+      "services": [
+        "fridge repair",
+        "washing machine repair",
+        "phone repair",
+        "pest control",
+        "deep cleaning"
+      ],
+      "address": "Demo listing, F-10, Islamabad"
+    },
+    {
+      "id": "demo:isb-i8-home",
+      "name": "[DEMO] I-8 Home Repairs",
+      "city": "Islamabad",
+      "area": "I-8",
+      "lat": 33.6736,
+      "lng": 73.0769,
+      "services": [
+        "plumber",
+        "electrician",
+        "AC repair",
+        "carpenter",
+        "painter"
+      ],
+      "address": "Demo listing, I-8, Islamabad"
+    },
+    {
+      "id": "demo:isb-i8-appliance",
+      "name": "[DEMO] I-8 Appliance & Pest Care",
+      "city": "Islamabad",
+      "area": "I-8",
+      "lat": 33.6697,
+      "lng": 73.0729,
+      "services": [
+        "fridge repair",
+        "washing machine repair",
+        "phone repair",
+        "pest control",
+        "deep cleaning"
+      ],
+      "address": "Demo listing, I-8, Islamabad"
+    },
+    {
+      "id": "demo:isb-bluearea-home",
+      "name": "[DEMO] Blue Area Home Repairs",
+      "city": "Islamabad",
+      "area": "Blue Area",
+      "lat": 33.7125,
+      "lng": 73.059,
+      "services": [
+        "plumber",
+        "electrician",
+        "AC repair",
+        "carpenter",
+        "painter"
+      ],
+      "address": "Demo listing, Blue Area, Islamabad"
+    },
+    {
+      "id": "demo:isb-bluearea-appliance",
+      "name": "[DEMO] Blue Area Appliance & Pest Care",
+      "city": "Islamabad",
+      "area": "Blue Area",
+      "lat": 33.7086,
+      "lng": 73.055,
+      "services": [
+        "fridge repair",
+        "washing machine repair",
+        "phone repair",
+        "pest control",
+        "deep cleaning"
+      ],
+      "address": "Demo listing, Blue Area, Islamabad"
+    },
+    {
+      "id": "demo:lhr-johar-home2",
+      "name": "[DEMO] Johar Town Quick Fix",
+      "city": "Lahore",
+      "area": "Johar Town",
+      "lat": 31.4759,
+      "lng": 74.2677,
+      "services": [
+        "plumber",
+        "electrician",
+        "AC repair"
+      ],
+      "address": "Demo listing, Johar Town, Lahore"
+    },
+    {
+      "id": "demo:isb-g13-home2",
+      "name": "[DEMO] G-13 Quick Fix",
+      "city": "Islamabad",
+      "area": "G-13",
+      "lat": 33.6619,
+      "lng": 73.0087,
+      "services": [
+        "plumber",
+        "electrician",
+        "AC repair"
+      ],
+      "address": "Demo listing, G-13, Islamabad"
+    }
+  ]
+}

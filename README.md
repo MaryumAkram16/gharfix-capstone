@@ -2,532 +2,347 @@
 
 > Originally built for submission to the AI Seekho Antigravity Hackathon.
 
-> **Stack:** React + Capacitor (Frontend) · n8n (AI Agent Workflows) · Supabase · Google Maps/Places API · OpenAI GPT-4o-mini · Gmail API
+> **Stack today:** React + Vite (frontend) · Vercel serverless functions in TypeScript (`api/`, `lib/`) · Supabase Postgres via PostgREST · Gemini (intent parsing) · OpenStreetMap Nominatim + Overpass (geocoding, provider search) · Gmail SMTP via Nodemailer · GitHub Actions (schedule) · Vitest
 
----
+GharFix books home-service providers (plumbers, electricians, AC technicians…) in Pakistan from a chat message in **English, Urdu or Roman Urdu**. It was first built as eight n8n workflows. The n8n host is gone, so the core flow (understand the request → find and rank providers → price → book) has been ported to tested serverless TypeScript. The n8n workflow JSON stays in [`n8n-workflows/`](n8n-workflows/) as the design record.
 
-## Table of Contents
+**Port status**
 
-1. [Overview](#1-overview)
-2. [Problem Statement](#2-problem-statement)
-3. [Solution Architecture](#3-solution-architecture)
-4. [Run Locally](#4-run-locally)
-5. [Demo](#5-demo)
-6. [System Orchestration — Frontend Routing to n8n Agent Workflows](#6-system-orchestration--frontend-routing-to-n8n-agent-workflows)
-7. [Workflow Reasoning Traces](#7-workflow-reasoning-traces)
-8. [AI Agent Workflows (n8n)](#8-ai-agent-workflows-n8n)
-9. [Provider Score Refresh (Nightly) — WF8b](#9-provider-score-refresh-nightly--wf8b)
-10. [Provider Dataset Schema](#10-provider-dataset-schema)
-11. [Provider Matching Factors](#11-provider-matching-factors)
-12. [APIs & Tools Used](#12-apis--tools-used)
-13. [Cost & Latency Analysis](#13-cost--latency-analysis)
-14. [Assumptions](#14-assumptions)
-15. [Baseline Comparison](#15-baseline-comparison)
-16. [Privacy & Security Note](#16-privacy--security-note)
-17. [Limitations](#17-limitations)
-18. [Future Improvements](#18-future-improvements)
-19. [Capstone Concept Mapping](#19-capstone-concept-mapping)
-
----
-
-## 1. Overview
-
-GharFix is an AI-powered home services platform designed for the informal economy in Pakistan. It enables users to effortlessly book trusted local service providers through natural language conversations in **English, Urdu, and Roman Urdu**. The platform addresses critical challenges in service discovery — unreliable matching, unpredictable pricing, and weak post-booking support — by leveraging a set of specialized AI-driven workflows, each handling one stage of the service lifecycle.
-
-**Core Capabilities:**
-
-- **Conversational AI:** Understanding and responding to multilingual user requests (47 service types, 71 cities, 82 named areas).
-- **Intelligent Provider Matching:** 7-factor weighted ranking of real Google Maps providers.
-- **Automated Workflow Execution:** Managing the end-to-end service lifecycle with minimal manual intervention.
-- **Booking Lifecycle Management:** From scheduling and confirmation through feedback and dispute resolution.
-- **Provider Optimization:** Continuous evaluation and improvement of provider performance dashboards.
-- **Waitlist Management:** Automatic waitlist enrollment when no slot or alternative provider is available.
-
----
-
-## 2. Problem Statement
-
-The informal service economy in Pakistan suffers from inefficient service discovery — time-consuming manual searches via WhatsApp and phone calls, unreliable providers, unpredictable pricing, and no structured post-service support. Existing platforms offer static listings, lack intelligent matching, and provide inadequate support for local languages. GharFix solves these problems with AI-driven workflows that automate matching, booking, and post-service support to improve trust, automation, and service quality.
-
----
-
-## 3. Solution Architecture
-
-### High-Level Architecture
-
-```
-Frontend (React + Capacitor — Mobile + Web)
-          ↓  routes each user action to a specific n8n webhook via a single proxy (/api/proxy)
-n8n Workflow Engine (Specialized AI Agents)
-  ├── WF1/WF2/WF3  Intent, Provider Matching & Pricing Agent
-  ├── WF4          Booking Agent
-  ├── WF5          Service Quality Loop
-  ├── WF6          Dispute & Escalation Handler
-  ├── WF7          Cancellation & Auto-Reschedule
-  ├── WF8          Provider Optimization Agent
-  └── WF8b         Provider Score Refresh (Nightly, scheduled)
-          ↓
-External Services
-  ├── Google Maps API  (Geocoding, Places, Distance Matrix)
-  ├── Supabase         (PostgreSQL — bookings, waitlist, provider_scores tables)
-  ├── OpenAI GPT-4o-mini  (Intent extraction LLM)
-  └── Gmail API        (Transactional email notifications)
-```
-
----
-
-## 4. Run Locally
-
-**Prerequisites:** Node.js and npm.
-
-1. Install dependencies:
-   `npm install`
-2. Copy `.env.example` to `.env.local` and set:
-   - `N8N_WEBHOOK_BASE_URL` — your n8n instance's webhook base URL (defaults to the maintainer's instance if unset)
-3. In Supabase, run the SQL files in `/db/` in this order: `bookings.sql`, `waitlist.sql`, `provider_scores.sql`.
-4. In n8n, import the workflows from `/n8n-workflows/` and attach your own Supabase (header auth), OpenAI, Google Maps, and Gmail credentials to the relevant nodes.
-5. Run the app:
-   `npm run dev`
-
-The server runs on port 3000 by default. If that port is already in use, free it or stop the conflicting process before running `npm run dev`.
-
----
-
-## 5. Demo
-
-A recorded walkthrough (with voice-over) is available at [assets/demo-video.mp4](assets/demo-video.mp4), or watch it directly:
-
-<video src="https://raw.githubusercontent.com/MaryumAkram16/gharfix-capstone/master/assets/demo-video.mp4" controls width="480"></video>
-
-### 5-Minute Demo Path
-
-1. **Open the app** → land on the Home screen with the service grid and chat prompt.
-2. **Make a request** → either type or use voice input. The demo shows a Roman Urdu voice request ("Mere bathroom ka pipe kharab ho gaya hai... Johar Town Lahore") — it's transcribed and parsed live into structured tags: `Plumber · Lahore · Johar Town`.
-3. **Confirm the match** → the assistant surfaces a matched provider (e.g. "Abrar plumber, Verified Pro") with appointment time, location, and an estimated cash-on-service price.
-4. **Track the service** → open **Track Live Service** to watch the booking move through `ON WAY → ARRIVED → DONE`.
-5. **Leave feedback** → rate the completed service (the demo submits 2 stars / "Bad") — a low rating automatically escalates into a dispute.
-6. **File a dispute** → the **Report an Issue** sheet appears with reason options (Provider Never Arrived, Poor Quality of Work, Overcharged, Provider Cancelled, Other); submitting one triggers the dispute-handling workflow.
-7. **See the auto-reschedule** → switch to the provider view ("Your Assignments") to see the booking marked `AUTO-RESCHEDULED`, with a new provider and new booking ID assigned automatically.
-8. **Try another language** → submit a second request in native Urdu script (e.g. "میری گاڑی خراب ہو گئی ہے... Car Mechanic") to see the same intent-extraction pipeline handle a third language.
-
-This single path exercises intent extraction, provider matching, booking, live tracking, feedback/rating, dispute handling, and auto-reschedule — six of the platform's core workflows in one run.
-
----
-
-## 6. System Orchestration — Frontend Routing to n8n Agent Workflows
-
-There is no separate orchestration layer deciding what happens next at runtime. Each screen in the React frontend calls a specific n8n workflow directly, through one shared proxy route (`server.ts` → `/api/proxy` → `https://{your-n8n-instance}/webhook/{endpoint}`). The frontend's job is to know which workflow to call at which step and what to do with the response; each n8n workflow's job is to do the actual work — extracting intent, scoring providers, checking availability, writing to Supabase, sending email.
-
-### Which screen calls which workflow
-
-| Frontend view | Endpoint called | Workflow |
+| Endpoint | Was | Now |
 |---|---|---|
-| `ChatView`, `HomeView` | `khadmat-intent` | WF1–WF3 (Intent, Matching & Pricing) |
-| `BookingView` | `khadmat-booking` | WF4 (Booking Agent) |
-| `ServiceQualityView` | `khadmat-quality` | WF5 (Service Quality Loop) |
-| `BookingsListView` (dispute) | `khadmat-dispute` | WF6 (Dispute & Escalation) |
-| `BookingsListView`, `ProviderCancelSheet` | `khadmat-reschedule` | WF7 (Cancellation & Auto-Reschedule) |
-| `ProviderDashView` | `khadmat-provider-dashboard` | WF8 (Provider Optimization) |
-
-WF8b runs independently of the frontend entirely — it's triggered by an n8n schedule, not a user action.
-
-### Request pipeline for a booking
-
-```
-User Query (any language)
-    ↓
-Frontend → calls extract_intent (WF1)
-    ↓  [isComplete: true]
-Frontend → calls find_providers (WF2 + WF3)
-    │   Geocode location → Places search → Distance Matrix
-    │   → Capacity check (Supabase) → 7-factor score → Price calculation
-    ↓
-Frontend presents top match, stores alternatives[]
-    ↓  [user confirms provider + slot]
-Frontend → calls confirm_booking (WF4)
-    │   Race-condition check → Insert to Supabase → Send email
-    ↓
-Frontend → calls track_service stages: en_route → arrived → completed → feedback (WF5)
-    │   [if rating ≤ 2 → auto-escalates to WF6]
-    ↓
-Frontend → calls handle_dispute if needed (WF6)
-    ↓
-Frontend → calls cancel_or_reschedule if needed (WF7)
-    │   Penalty engine → Alternative picker → Slot selector → Re-confirm via WF4
-    │   [if no slot → waitlist] [if no alternative → waitlist + full refund]
-    ↓
-Frontend → calls get_provider_dashboard for provider-side view (WF8)
-```
-
-Recovery logic (retry, offer alternate dates, escalate, or enroll in waitlist) is handled inside each workflow itself — e.g. WF4 returns a `slot_taken` response with alternative dates already computed, rather than leaving that decision to the frontend.
+| `khadmat-intent` | WF1 (n8n + OpenAI) | `lib/intent/` (Gemini, keyword fallback) |
+| `khadmat-provider-match` | WF2 + WF3 (n8n + Google Maps) | `lib/matching/` (OpenStreetMap) |
+| `khadmat-booking` | WF4 (n8n + Gmail node) | `lib/booking/` (Supabase, Nodemailer) |
+| `khadmat-quality`, `-dispute`, `-reschedule`, `-provider-dashboard` | WF5–WF8 | **not ported yet**: forwarded to n8n only if `N8N_WEBHOOK_BASE_URL` is set, otherwise they answer 503 |
 
 ---
 
-## 7. Workflow Reasoning Traces
+## Contents
 
-Every n8n workflow returns a structured reasoning trace in its JSON response (internally keyed `antigravity_trace` — a legacy field name from the project's original build tooling, kept as-is in the code). It documents why a decision was made and what data it was based on, which is useful both for debugging and for showing the reasoning behind an automated decision (e.g. a refund amount, a provider ranking). Below are three real sample traces from production runs.
-
-### Trace 1 — Provider Selection (WF2 Calculate Provider Scores)
-
-```json
-{
-  "antigravity_trace": {
-    "workflow": "WF2-ProviderMatching",
-    "reasoning": [
-      "STEP 1 — User requested 'Plumber' in 'Johar Town, Lahore' with high urgency and high budget_sensitivity.",
-      "STEP 2 — Geocoded location: lat 31.4697, lng 74.2728. Searched Google Places: 8 providers returned.",
-      "STEP 3 — Fetched today's active bookings from Supabase. Provider ChIJzUJz89oB has 2/4 slots filled (MODERATE). Provider ChIJ8YeHj has 4/4 slots filled (FULL — excluded from availability score).",
-      "STEP 4 — Scored all 8 providers across 7 factors. Top result: ChIJzUJz89oB scored 84. Breakdown: distance=80, availability=100, review=92, reliability=90, specialization=100, price=60, cancellation=95.",
-      "STEP 5 — Job complexity = intermediate. Provider's complexity_levels = ['basic','intermediate'] → complexity_match: true → specialization score boosted to 100.",
-      "STEP 6 — Budget sensitivity = HIGH. Provider base_rate_pkr = 900 → price score = 70 (within acceptable range for high-sensitivity user).",
-      "STEP 7 — Price calculated: base 900 + complexity 270 + surge 0 (outside peak hours) + distance 105 = PKR 1275 total.",
-      "STEP 8 — Recommended Provider: 'Al Madina electric store' (score 84). Next best: 'Bismillah electrician' (score 84). Alternatives array passed to the frontend for potential reschedule use."
-    ],
-    "confidence": 91,
-    "data_sources": {
-      "providers": "Google Places Text Search API",
-      "capacity": "Supabase bookings table — today confirmed/in_progress",
-      "distance": "Google Distance Matrix API"
-    }
-  }
-}
-```
-
-### Trace 2 — Dispute Escalation (WF6 Quality Complaint Handler)
-
-```json
-{
-  "antigravity_trace": {
-    "workflow": "WF6-QualityComplaint",
-    "reasoning": "Quality complaint for booking BK-2026-1778878469314-066. Rating: 2/5. Sentiment: negative (keywords found: ['late','kharab']). Auto-escalated from WF5 feedback stage. Severity classified as HIGH (rating=2, negative sentiment). Compensation decision: 25% of PKR 1150 = PKR 288 refund approved. Provider 'YS Painters' score delta: -15. Flagged for 7-day monitoring. Human escalation: NOT required (threshold is rating=1 or CRITICAL). Booking status updated to 'disputed' in Supabase.",
-    "confidence": 88,
-    "decision_factors": ["rating_score", "sentiment_analysis", "review_keywords", "auto_escalation_flag"]
-  }
-}
-```
-
-### Trace 3 — Provider Optimization Dashboard (WF8 Optimization Engine)
-
-```json
-{
-  "antigravity_trace": {
-    "workflow": "WF8-ProviderOptimization",
-    "reasoning": [
-      "STEP 1 — Fetched 23 total bookings for provider 'YS Painters' (ID: ys_painters).",
-      "STEP 2 — Workload today: 2/4 slots (50% utilization). Status: MODERATE.",
-      "STEP 3 — Earnings calculated using final_price_pkr (actual paid, set by WF5 completed stage): PKR 21400 across 18 completed jobs. Avg: PKR 1189 vs platform avg PKR 1200. Fairness: FAIR.",
-      "STEP 4 — Reputation from WF5 ratings: 18 ratings, avg 4.3/5. Flagged by WF6: 1. Health: GOOD.",
-      "STEP 5 — Cancellation analysis from WF7 data: 2 cancellations out of 23 total. Rate: 9%. Status: GOOD.",
-      "STEP 6 — Loyalty: 3 repeat customer(s) detected from completed bookings.",
-      "STEP 7 — Demand forecast: Top slot is 10:00 with 5 platform bookings.",
-      "STEP 8 — Rate suggestion: Fair relative to platform avg. No change needed.",
-      "STEP 9 — Generated 4 optimization tips for provider."
-    ],
-    "data_sources": {
-      "ratings": "customer_rating field written by WF5 feedback stage",
-      "flags": "flagged_for_review field written by WF6 dispute handler",
-      "cancellations": "cancellation_reason field written by WF7 auto-reschedule",
-      "earnings": "final_price_pkr written by WF5 completed stage"
-    },
-    "confidence": 93
-  }
-}
-```
+1. [Why the port, and what changed](#1-why-the-port-and-what-changed)
+2. [Architecture](#2-architecture)
+3. [Run it](#3-run-it)
+4. [Booking guarantees](#4-booking-guarantees)
+5. [Intent parsing](#5-intent-parsing)
+6. [Provider matching, pricing and the limits of OpenStreetMap](#6-provider-matching-pricing-and-the-limits-of-openstreetmap)
+7. [Demo-data fallback](#7-demo-data-fallback)
+8. [Self-healing: retries, incidents, alerts, reconcile](#8-self-healing-retries-incidents-alerts-reconcile)
+9. [Tests](#9-tests)
+10. [Known limitations](#10-known-limitations)
+11. [The original n8n design](#11-the-original-n8n-design)
+12. [Privacy and security](#12-privacy-and-security)
 
 ---
 
-## 8. AI Agent Workflows (n8n)
+## 1. Why the port, and what changed
 
-Each n8n workflow is a specialized AI agent, called directly by the frontend for one step in the service lifecycle (see the routing table in section 5).
+**Why.** The n8n instance the app called (`n8ndigitalstudio.duckdns.org`) stopped when its free hosting ended, so every screen failed. Rather than re-host n8n, the workflows are rewritten as code: one Vercel function per webhook, with the logic in small modules that can be unit-tested with fake dependencies. Paid Google APIs are replaced because no credit card is available.
 
-### WF1/WF2/WF3 — Intent, Provider Matching & Pricing Agent
-
-The frontend calls this workflow with the raw user query. WF1 passes it through GPT-4o-mini with a structured output parser to extract service type, location, urgency, budget sensitivity, job complexity, and language. WF2 geocodes the location, searches Google Places, checks real-time capacity from Supabase, and scores all providers. WF3 calculates the dynamic price breakdown.
-
-**Features:**
-- Multilingual support (English, Urdu, Roman Urdu) with fuzzy spell correction.
-- NLP-based service classification covering 47 service types across 71 cities.
-- Confidence scoring — below 70% triggers a clarification question in the user's own language.
-- 7-factor provider scoring algorithm with job complexity matching.
-- Fallback geocoding for unknown area names using a hardcoded coordinate map.
-- Multi-service support with 10% bundle discount.
-
-### WF4 — Booking Agent
-
-The frontend calls this workflow to manage slot availability and confirm bookings. It has two steps: Step A checks existing bookings with travel-time buffer logic to build an accurate available slot list; Step B performs a race-condition check at the exact moment of confirmation to prevent double-booking.
-
-**Features:**
-- Service-duration map (AC install = 180 min, painter = 240 min, etc.) plus 30-min travel buffer.
-- Exact slot conflict detection plus buffer window overlap detection.
-- Atomic race-condition check before writing to Supabase.
-- Unique booking ID generation (`BK-{year}-{timestamp}-{random}`).
-- Confirmation email via Gmail API.
-- Slot-taken fallback with alternative dates offered automatically.
-
-### WF5 — Service Quality Loop
-
-The frontend calls this workflow through four sequential stages to manage the complete post-booking service lifecycle.
-
-**Stages:**
-- `en_route` — calculates ETA from distance, updates status in Supabase, sends email.
-- `arrived` — logs arrival time, generates service-specific checklist (7–9 steps), updates status to `in_progress`.
-- `completed` — records final price (`final_price_pkr`), detects price overruns, sends completion email.
-- `feedback` — records 1–5 star rating, written review, optional voice transcript, up to 3 base64 photo attachments. Runs sentiment analysis. Updates provider reputation. Auto-escalates to WF6 if rating ≤ 2.
-
-### WF6 — Dispute & Escalation Handler
-
-When issues arise, the frontend calls this workflow to handle dispute resolution. It routes by `dispute_type` and applies tiered resolution logic.
-
-| Dispute Type | Decision Logic |
+| n8n building block | Replacement |
 |---|---|
-| `no_show` | Full refund. Cancellation rate >20% → blacklist. Otherwise → warning strike. |
-| `provider_cancelled` | Penalty strike. Auto-rebook from alternatives list. PKR 200 credit if <3 hours to appointment. |
-| `quality_complaint` | Rating 1 or negative sentiment → 50% refund + human escalation. Rating 2 → 25% refund. Rating 3 → warning only. |
-| `price_disagreement` | ≤10% variance → warning only. 11–30% → 75% of excess refunded. >30% → full excess refunded. |
-| `overrun` | Pre-approved → charge stands. Not notified → extra rejected. <15 min overrun → ≤10% extra. >15 min → 50% of extra approved. |
+| Webhook + Code nodes | `api/*.ts` (web-standard `POST(request)` handlers) calling `lib/**` |
+| OpenAI gpt-4o-mini + structured output parser | Gemini REST API with a JSON response schema, then strict validation (`lib/intent/`) |
+| Google Geocoding / Places / Distance Matrix | Nominatim / Overpass / straight-line distance, behind `Geocoder` and `ProviderDirectory` interfaces (`lib/matching/directory.ts`) |
+| Gmail node | Nodemailer over Gmail SMTP with an app password, behind an `EmailSender` interface (`lib/email/`) |
+| n8n schedule trigger | GitHub Actions cron (Vercel Hobby cron runs only daily) |
 
-All outcomes update `status` and `flagged_for_review` in Supabase and send a dispute update email to the user.
+**Kept identical.** Request and response JSON shapes (the frontend still posts `{ endpoint, ...body }` to `/api/proxy`); WF2's 7-factor scoring and WF3's pricing (checked against the original n8n code, §6); WF4's service durations, travel buffer and overlap rule.
 
-### WF7 — Cancellation & Auto-Reschedule
-
-The frontend calls this workflow to handle three cancellation modes: user cancel only, user reschedule, and provider cancel. For reschedules, it runs a full pipeline: penalty engine → alternative picker (sorted by `computed_score`) → calls WF4 Step A to get slots for new provider → calls WF4 Step B to confirm → updates original booking in Supabase → sends email.
-
-**Waitlist Management:** When no alternative provider exists, or the alternative has no available slots, the user is automatically enrolled in the Supabase `waitlist` table. A ticket is created and the user is notified by email. The system offers three alternate date suggestions.
-
-**Compensation Logic:**
-- <3 hours to appointment → PKR 250 credit
-- <12 hours to appointment → PKR 100 credit
-
-### WF8 — Provider Optimization Agent
-
-This workflow gives providers a complete performance dashboard, called live when a provider opens their dashboard.
-
-**Sections computed:**
-- **Workload** — today's utilization vs max capacity, open slots, status label.
-- **Earnings** — total from `final_price_pkr` (actual paid), avg per job vs platform average, fairness label.
-- **Reputation** — avg rating from `customer_rating` (written by WF5), flagged count from WF6, health label.
-- **Cancellations** — rate from WF7 records, status label.
-- **Loyalty** — repeat customer detection by email, suggested 5% discount.
-- **Demand Forecast** — top 3 slots by platform-wide booking volume.
-- **Rate Optimization** — suggested base rate if earnings below platform average.
+**Changed on purpose**, each covered by tests:
+- Slots are normalised to 24h `HH:MM` everywhere ("4:00 PM" and "16:00" are the same slot).
+- WF4's simulated "offline" slots and WF2's invented ratings and reviews are gone.
+- Double booking is stopped by a database unique index, not only by a pre-check (§4).
+- Confirm requests are idempotent (§4).
+- Surge pricing uses the Pakistan hour, not the server's UTC clock.
+- Booking dates are Pakistan dates (the frontend used the UTC date, so between 00:00 and 04:59 PKT it sent yesterday).
+- Errors have HTTP status codes (n8n answered 200 for everything), and the booking screen reads the body before checking the status.
 
 ---
 
-## 9. Provider Score Refresh (Nightly) — WF8b
+## 2. Architecture
 
-WF8b runs on a nightly n8n schedule trigger instead of a live webhook. It fetches all bookings once, computes optimization scores for every provider in a single batch pass (same logic as WF8), and upserts the results into a `provider_scores` Supabase table (schema in `/db/provider_scores.sql`). The provider dashboard can then read a precomputed score instead of recalculating it on every request — this table doubles as the platform's caching layer.
-
----
-
-## 10. Provider Dataset Schema
-
-Each provider entry is built live from Google Places data, enriched with computed fields. The full runtime schema used by WF2 is:
-
-```json
-{
-  "id": "ChIJzUJz89oBGTkRji1Qo6_dj8I",
-  "name": "Al Madina Electric Store",
-  "owner": "Al Madina Electric Store",
-  "services": ["electrician", "fan repair"],
-  "complexity_levels": ["basic", "intermediate"],
-  "areas": ["Johar Town, Lahore"],
-  "coordinates": { "lat": 31.4607, "lng": 74.2760 },
-  "address": "Johar Town, Lahore",
-  "base_rate_pkr": 900,
-  "rating": 5.0,
-  "review_count": 48,
-  "last_review_date": "2026-05-18",
-  "on_time_score": 0.95,
-  "cancellation_rate": 0.04,
-  "availability_slots": ["09:00", "11:00", "14:00", "16:00"],
-  "active_bookings": 2,
-  "max_daily_bookings": 4,
-  "at_capacity": false,
-  "distance_km": 2.3,
-  "verified": true,
-  "reputation_score": 87,
-  "google_maps_url": "https://maps.google.com/?q=Al+Madina+Electric",
-  "place_id": "ChIJzUJz89oBGTkRji1Qo6_dj8I",
-  "photos": ["https://maps.googleapis.com/maps/api/place/photo?..."],
-  "source": "google_maps"
-}
+```
+React frontend (src/)
+   │  POST /api/proxy { endpoint, ...body }        (unchanged contract)
+   ▼
+api/proxy.ts ──► lib/http/proxy.ts  routes by endpoint (allow-list of 7)
+   │               ├─ khadmat-intent          → lib/intent/handler.ts
+   │               │     Gemini → validate → (fallback) src/lib/intent.ts keyword parser
+   │               │     confidence ≥ 70 → provider match in-process, else a clarification question
+   │               ├─ khadmat-provider-match  → lib/matching/handler.ts
+   │               │     Nominatim → Overpass (→ demo seed, opt-in) → Supabase capacity
+   │               │     → provider schema → 7-factor score → price
+   │               ├─ khadmat-booking         → lib/booking/handler.ts
+   │               │     get_slots | confirm → Supabase (PostgREST) → Gmail SMTP
+   │               └─ others                  → n8n if configured, else 503
+   │
+api/booking.ts, api/intent.ts, api/provider-match.ts   same handlers, called directly
+api/reconcile.ts  ◄── .github/workflows/reconcile.yml every 15 min (bearer CRON_SECRET)
+   │
+lib/resilience/   wraps Supabase, Gemini and SMTP calls: safe-only retries,
+                  workflow_incidents rows, de-duplicated alert emails
 ```
 
-**Supabase `bookings` table key fields (written by multiple workflows):**
+All routes are wired in one place, `lib/app.ts` (`createApp()`), used by both the Vercel functions and the local dev server (`server.ts`). Every handler takes its dependencies (database, email, map services, id generator, clock, logger) as arguments; that is what makes the fake-dependency tests possible.
 
-| Field | Written By | Purpose |
+| Path | What |
+|---|---|
+| `api/` | Vercel functions (thin: read body, call `lib/`, write response) |
+| `lib/booking/` | slots, schedule rules, validation, Supabase repository, receipt/email, handler |
+| `lib/intent/` | Gemini client, prompt (copied from n8n), validator, keyword fallback, handler |
+| `lib/matching/` | OSM adapters, service→OSM tag table, scoring, pricing, demo directory, handler |
+| `lib/resilience/` | retry, policies, incidents, alert email, recorder |
+| `lib/reconcile/` | re-send unsent confirmations |
+| `lib/http/`, `lib/log.ts` | HTTP results, proxy router, JSON logger (secrets redacted, emails masked) |
+| `db/` | original schema files (unchanged) + numbered migrations `001_*`, `002_*` with rollbacks |
+| `db/seed/demo_providers.json` | fictional demo providers (§7) |
+| `n8n-workflows/` | the original workflows (design record, not executed) |
+| `tests/` | Vitest suites (§9) |
+
+---
+
+## 3. Run it
+
+**Prerequisites:** Node.js 20+, npm, a Supabase project.
+
+1. `npm install`
+2. Copy `.env.example` to `.env` and fill in what you use. Only names are in the file; secrets come from the environment.
+   - **Required for bookings:** `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (server-side only).
+   - **Optional:**
+     - `GEMINI_API_KEY` (without it, the keyword parser is used)
+     - `GMAIL_USER` + `GMAIL_APP_PASSWORD` (without them, emails are only logged)
+     - `ALERT_EMAIL`, `CRON_SECRET`
+     - `USE_DEMO_PROVIDERS` (§7)
+     - `NOMINATIM_URL`, `OVERPASS_URL`, `OSM_USER_AGENT`, plus timeouts
+3. In the Supabase SQL editor, in this order:
+   1. `db/bookings.sql` (and `waitlist.sql`, `provider_scores.sql` for the unported workflows), if the tables don't exist yet.
+   2. `db/001_booking_integrity_check.sql`: read-only, must return zero rows.
+   3. `db/001_booking_integrity.sql`
+   4. `db/002_incidents.sql`
+
+   Each migration runs in one transaction and can be rerun; `db/00x_rollback.sql` undoes it.
+4. `npm run dev` serves the app and `/api/*` on port 3000 (`server.ts` runs the same `createApp()` as Vercel).
+
+**Deploying on Vercel:**
+- Set the same env vars in the Vercel project.
+- Apply the migrations **before** deploying code that uses them.
+- For the 15-minute reconcile, add the repository secrets `RECONCILE_URL` (e.g. `https://<app>.vercel.app/api/reconcile`) and `CRON_SECRET`. Scheduled workflows only run from the default branch.
+
+Not yet done: a deployment to Vercel has not been made from this branch.
+
+---
+
+## 4. Booking guarantees
+
+`khadmat-booking` has two actions, `get_slots` and `confirm`, with WF4's request and response shapes. What a confirm can return:
+
+| HTTP | `status` | Meaning |
 |---|---|---|
-| `status` | WF4, WF5, WF6, WF7 | Booking lifecycle state |
-| `slot` | WF4 | Confirmed time slot |
-| `final_price_pkr` | WF5 completed stage | Actual amount paid (used by WF8 earnings) |
-| `customer_rating` | WF5 feedback stage | Star rating (used by WF8 reputation) |
-| `flagged_for_review` | WF6 | Dispute flag (used by WF8 reputation) |
-| `cancellation_reason` | WF7 | Provider cancellation log (used by WF8 cancellation) |
-| `rescheduled_to_booking_id` | WF7 | Link to replacement booking |
+| 200 | `confirmed` | booked (or an idempotent replay: `replayed: true`, `booking_status` = current status) |
+| 400 | `validation_error` | every missing/invalid field listed in one response |
+| 409 | `slot_taken` | taken by the pre-check or by the unique index; includes alternative dates |
+| 422 | `idempotency_key_reused` | same key, different request |
+| 503 | `service_unavailable` | Supabase did not answer (after safe retries) |
+
+**How double booking is prevented**
+
+1. **Normalised slots.** `normaliseSlot()` (`lib/booking/slot.ts`) and its SQL twin `normalize_slot()` turn every format into `HH:MM`. A test runs about 200 inputs through both and requires identical results, including Unicode digits and spaces. The SQL never raises.
+2. **Pre-check** with WF4's rules: service duration + 30 min travel buffer, and both "inside an earlier booking" and "would run into the next one". This gives the friendly 409 in the common case.
+3. **Unique index** `bookings_active_slot_key` on `(provider_id, booking_date, normalize_slot(slot))` for confirmed/in-progress rows (`db/001`). This is what makes two simultaneous requests safe: Postgres error 23505 on that index becomes a 409. It is tested with an in-memory fake that enforces the same rule, and against real Postgres 16.
+
+**How retries are made safe**
+
+4. **Idempotency.** The booking screen sends an `idempotency_key` (`crypto.randomUUID()`) and a request fingerprint is stored next to it.
+   - Same key and same request: the original receipt is replayed. One row, one email.
+   - Same key, different request: 422.
+   - Two concurrent requests with the same key: the unique index `bookings_idempotency_key_key` turns the loser into a replay.
+5. **Retry after an unclear failure.** If the insert times out after it actually committed, the keyed insert is retried. The retry hits a unique index, a second `booking_id` collision path tries once more with a new id, and the result is a replay of the original booking. The test checks exactly one row and the same booking id.
+6. **Try again in the UI** resends the byte-identical request with the same key, so a retry after a timeout replays instead of booking twice. This was checked in a real browser (Playwright): the same key appears on both requests and the booking is saved once.
+
+**How confirmation emails are made reliable**
+
+7. **Email never breaks a booking.** The confirm waits at most 5 s for SMTP. A failure is logged and recorded as an incident; the booking still returns 200.
+8. **`confirmation_sent_at`** (`db/002`) is set only when SMTP accepted the message: not for the console fallback, not on failure. `api/reconcile.ts` re-sends the rest (§8).
 
 ---
 
-## 11. Provider Matching Factors
+## 5. Intent parsing
 
-WF2's scoring engine evaluates all nearby providers across **7 weighted factors**:
+`khadmat-intent` keeps WF1's flow:
+- parse the request
+- if confidence is 70 or more: run the n8n multi-service orchestrator, then provider matching in-process, and answer `{ status: "success", stage: "booking_ready", matching_result }`
+- otherwise answer `{ status: "clarification_needed", clarification_question, … }`
 
-| # | Factor | Weight | How It's Calculated |
-|---|---|---|---|
-| 1 | **Distance / Travel Time** | 20% | `max(0, 100 - distance_km × 10)` via Google Distance Matrix API |
-| 2 | **Availability** | 20% | Has open slots AND `active_bookings < max_daily_bookings` → 100; slots only → 50; none → 0 |
-| 3 | **Review Score + Recency Bonus** | 15% | `(rating/5) × 100` + up to 15 pts bonus if reviewed within 3 days |
-| 4 | **Reliability / On-Time Score** | 15% | `on_time_score × 100` (derived from rating with provider-behaviour adjustment) |
-| 5 | **Skill Specialization + Job Complexity Match** | 15% | Service match + complexity tier match → 100; one tier short → 55; no match → 20 |
-| 6 | **Price vs Budget Sensitivity** | 10% | Tiered by `budget_sensitivity`: high-sensitivity users get higher scores for cheaper providers |
-| 7 | **Cancellation Rate** | 5% | `max(0, 100 - cancellation_rate × 500)` |
+- **Gemini.** The prompt is the n8n prompt, unchanged; a test compares it with the workflow file. The output must match a response schema and is then validated strictly: unknown enum values, wrong types or an out-of-range confidence reject the whole answer. The default model is `gemini-3.8-flash` (`GEMINI_MODEL` overrides it), and the key is sent in a header, never in the URL.
+- **Fallback.** If Gemini isn't configured, is unavailable, rejects the key, blocks the prompt or returns invalid output, the keyword parser `extractIntent()` in `src/lib/intent.ts` is used. That is the same parser the chat UI runs. Responses say which one answered (`intent_source`).
+- **Keyword parser fixes.** Fuzzy matching used to turn everyday Roman Urdu words into services and cities: "mein" became *pest control*, "aur" *carpenter*, "kharab" the city *Karak*, and "plumber chahiye Lahore" set the area to "Plumber". Fuzzy matching now needs 5+ letters, matches phrases word by word, and skips a stopword list. Every one of those cases fails on the old parser and passes now.
 
-### Job Complexity Classification
-
-Job complexity is explicitly classified as `basic`, `intermediate`, or `complex` and matched against the provider's `complexity_levels` array:
-
-- **basic** — simple check or inspection (AC gas refill, geyser check)
-- **intermediate** — repair or component replacement (AC repair, electrician fault fix)
-- **complex** — full installation or overhaul (AC installation, solar installation, false ceiling)
-
-A provider offering only basic services scores 25 on specialization for a complex job (two tiers short). This prevents mismatched assignments even when the provider is nearby and highly rated.
+Not tested live: no Gemini key was available while building this, so the Gemini path is covered by request/response fakes only.
 
 ---
 
-## 12. APIs & Tools Used
+## 6. Provider matching, pricing and the limits of OpenStreetMap
 
-| Tool / API | Role |
+**Pipeline.**
+1. Geocode the location (Nominatim, Pakistan only, cached).
+2. Search 5 km around it (Overpass), using a service → OSM-tag/name table, e.g. `craft=plumber` or names containing "plumb".
+3. Read today's real booking counts from Supabase.
+4. Map each place to WF2's provider schema.
+5. Score and price.
+
+**Scoring and pricing are WF2/WF3, unchanged.** `tests/matching/golden.test.ts` runs the original n8n Code nodes from the workflow JSON next to the TypeScript and requires identical output. It covers complexity tiers, budgets, multi-service requests, and review-recency, price and surge-hour boundaries. Changing any weight or threshold makes it fail.
+
+| Factor | Weight |
 |---|---|
-| **n8n** | AI agent workflow automation — one specialized workflow per service-lifecycle step |
-| **Google Maps Geocoding API** | Converts area names to lat/lng coordinates |
-| **Google Places Text Search API** | Discovers real nearby service providers |
-| **Google Distance Matrix API** | Calculates driving distance and travel time between user and providers |
-| **OpenAI GPT-4o-mini** | Natural language intent extraction with structured output parsing |
-| **Supabase (PostgreSQL)** | Database for bookings, waitlist, provider_scores, real-time capacity checks |
-| **Gmail API** | Transactional emails (confirmation, en-route, arrived, completed, dispute, cancellation) |
-| **React + Capacitor** | Cross-platform frontend — web + mobile from a single codebase |
+| Distance | 20% |
+| Availability | 20% |
+| Reviews + recency | 15% |
+| Reliability (on-time) | 15% |
+| Specialization + job complexity | 15% |
+| Price vs budget | 10% |
+| Cancellation rate | 5% |
 
----
+Pricing is the base rate plus a complexity multiplier (1.0 / 1.3 / 1.6), +20% in the Pakistan rush hours (09:00–11:59 and 17:00–19:59), PKR 50/km, and 10% off for multi-service requests.
 
-## 13. Cost & Latency Analysis
+**What OpenStreetMap cannot provide.** n8n filled these gaps with invented numbers (rating 4.0, 10 reviews, "reviewed today"…). Now they are `null`, every provider lists them in `data_gaps`, and the response says so in `data_notes`.
 
-### Per-Request Latency Breakdown
-
-| Component | Average Latency | Notes |
+| Field | From OSM? | What happens instead |
 |---|---|---|
-| Intent Extraction (GPT-4o-mini) | 1–3 sec | Includes structured output parsing |
-| Google Maps Geocoding | ~300 ms | Cached for repeated locations |
-| Google Places Search | 500 ms – 1 sec | Returns up to 20 results |
-| Google Distance Matrix | ~400 ms | Called once per Places batch |
-| Supabase Capacity Query | <100 ms | Indexed on `provider_id + booking_date` |
-| n8n Workflow Execution (WF4 confirm) | 400–800 ms | Includes race-condition check + DB write |
-| Gmail Email Send | 300–600 ms | Async — does not block webhook response |
-| **Total End-to-End (booking confirm)** | **~4–7 sec** | Full path: intent → match → price → confirm |
+| name, location, address tags | yes | used as is |
+| rating, review count, last review date | **no** | `null`; the card shows "No ratings or reviews yet (OpenStreetMap listing)" |
+| on-time score, cancellation rate, reputation | **no** | `null`; these factors score 0 and are hidden in the breakdown |
+| price | **no** | GharFix default PKR 900, marked `base_rate_source: "gharfix_default"` |
+| opening hours | partly (free text) | not evaluated; GharFix's default booking windows are offered |
+| business status / verified | **no** | `verified: false` |
+| road distance | **no** | straight-line distance, labelled "straight line" |
+| photos | **no** | none |
 
-### Estimated Cost per Booking (at scale)
+Because every OSM provider lacks the same three factors, they don't change the ranking between OSM providers; they lower everyone's absolute score equally.
 
-| Component | Estimated Cost |
+Not tested live: this environment's network policy blocks `nominatim.openstreetmap.org` and `overpass-api.de`, so the adapters are tested against fakes built from the documented response formats. Both public services have usage limits (Nominatim: at most 1 request/second with an identifying User-Agent); for real traffic, point `NOMINATIM_URL` / `OVERPASS_URL` at your own or a commercial instance.
+
+---
+
+## 7. Demo-data fallback
+
+Off by default. With `USE_DEMO_PROVIDERS=1` (exactly `1`), when OpenStreetMap returns **zero** providers, matching falls back to `db/seed/demo_providers.json`: 18 fictional providers around 8 areas of Lahore and Islamabad.
+
+- **Clearly labelled data:**
+  - The file starts with a "DEMO DATA" notice.
+  - Every id starts `demo:`, every name `[DEMO] `, every address "Demo listing, …".
+  - A validator rejects the file if it contains ratings, reviews or prices, so even demo data invents nothing beyond the listing.
+- **Clearly labelled responses:**
+  - `data_source` is `"demo_seed"` (instead of `"openstreetmap"`), and every provider has `source: "demo_seed"`.
+  - The UI shows a "DEMO DATA" banner and a "Demo data" badge on each card (checked in a browser).
+- **Never a substitute for an outage:** if OpenStreetMap is unreachable, the answer is still 503. Outside Lahore and Islamabad there are no demo providers.
+- **Bookings are real:** booking a demo provider writes a real booking row (identifiable by its `demo:` provider id and `[DEMO]` name).
+
+---
+
+## 8. Self-healing: retries, incidents, alerts, reconcile
+
+**Retries only where a repeat cannot act twice** (`lib/resilience/policies.ts`):
+
+| Call | Retried? |
 |---|---|
-| GPT-4o-mini (intent + structured output) | ~$0.001 per request |
-| Google Maps (Geocode + Places + Distance) | ~$0.010–$0.017 per booking |
-| Supabase (free tier up to 500 MB) | ~$0 for prototype scale |
-| n8n (self-hosted) | Infrastructure cost only |
-| Gmail API | Free up to 500 emails/day |
-| **Total per booking** | **~$0.012–$0.020** |
+| Supabase reads (slots, idempotency lookup, capacity, reconcile scan) | yes: 3 tries, 250 ms then 750 ms, on outages (5xx, 429, network, timeout) |
+| Booking insert **with** an idempotency key | yes, same policy (a repeat becomes a replay, §4) |
+| Booking insert **without** a key | **never** (could double-book) |
+| Gemini | yes: 2 tries on 429/5xx/network, not after a timeout |
+| SMTP sends, `confirmation_sent_at` update, alert emails | **never** (could email twice); the reconciler handles unsent confirmations |
 
-### Optimization Strategies
+**Incidents.** Each final failure, and each failure a retry fixed (`auto_fixed = true`), becomes a row in `workflow_incidents` (`db/002`). Columns:
+- `workflow`, `step`, `error_class`
+- `retryable`, `auto_fixed`
+- `request_id`, `payload_hash`, `created_at`
 
-- Unnecessary LLM calls are eliminated — `extract_intent` is cached within a conversation turn.
-- Google Places results are reused across the matching and scoring steps without a second API call.
-- Supabase capacity queries use a single indexed query for all providers in the day's batch.
-- n8n workflows respond to the webhook before triggering email sends (parallel branches).
+There is no free-text column, so no secret or customer data can be stored. Row-level security is on with no policies, so the public anon key cannot read or write it; a test checks this against real Postgres.
 
----
+**Alerts.** A final failure sends one plain-language email to `ALERT_EMAIL`: what broke, what was tried, and what to do (e.g. "Supabase rejected the key. Check SUPABASE_SERVICE_ROLE_KEY…", or "Gmail rejected the login. Check GMAIL_APP_PASSWORD…"). Emails are masked. Repeats of the same failure (same `payload_hash`) within `ALERT_DEDUPE_MINUTES` (default 60) send nothing. De-duplication works even while Supabase is down (in memory). Recording and alerting never throw and are time-boxed: a broken alert email never breaks a booking.
 
-## 14. Assumptions
-
-- Users have internet access and a smartphone or web browser.
-- Providers are discoverable via Google Places in major Pakistani cities.
-- Google Maps provider information (name, address, rating) is reasonably accurate.
-- Voice input quality is sufficient for transcription when that feature is used.
-- Users permit location access for nearby provider matching.
-- Cash-on-service is the payment method — no payment gateway integration required for this prototype.
-- External APIs (Google Maps, Supabase, Gmail) remain available during workflow execution.
-- `max_daily_bookings` defaults to 4 per provider per day unless explicitly configured.
+**Reconcile.** `api/reconcile.ts`, called every 15 minutes by `.github/workflows/reconcile.yml` with `Authorization: Bearer <CRON_SECRET>`:
+- **Which bookings:** confirmed, `confirmation_sent_at` NULL, created between 5 minutes and 24 hours ago, with a real address (test domains such as `@example.test` are never mailed).
+- **What it does:** re-sends each confirmation and records it.
+- **What it returns:** `{ found, fixed, failed, skipped, deferred }`.
+- **Idempotent:** a second run finds nothing.
+- **Never overlapping:** the workflow uses a concurrency group so two runs never send at once.
 
 ---
 
-## 15. Baseline Comparison
+## 9. Tests
 
-| Capability | Traditional Platforms | GharFix (AI Agent Workflows) |
-|---|---|---|
-| Provider discovery | Static listings, manual search | Real-time Google Places + AI ranking |
-| Language support | English only | Urdu + Roman Urdu + English + mixed |
-| Provider ranking | Distance or rating alone | 7-factor weighted algorithm |
-| Job complexity matching | Not supported | Basic / Intermediate / Complex classification |
-| Double-booking prevention | Manual or none | Race-condition check at confirmation time |
-| Cancellation handling | Manual rebooking | Auto-reschedule with penalty + compensation |
-| Waitlist | Not supported | Automatic Supabase waitlist enrollment |
-| Dispute resolution | Customer support ticket (1–3 days) | Automated resolution in <1 sec with tiered refund logic |
-| Provider performance insight | None | Real-time dashboard with earnings, loyalty, demand forecast |
-| Estimated booking time | 15–30 min (calls + WhatsApp) | ~2–4 min (conversation to confirmation) |
-| Post-service follow-up | None | En-route → arrived → completed → feedback loop |
+```bash
+npm test
+```
 
----
+```bash
+npx tsc --noEmit
+```
 
-## 16. Privacy & Security Note
+Every external dependency is faked in the unit tests: Supabase, Gemini, Nominatim, Overpass, SMTP, the clock and ids. Test data uses `@example.test` addresses and `BK-TEST-` booking ids only. Main suites:
 
-GharFix is designed with privacy-focused principles:
-
-- User locations are used only for provider matching and are not stored beyond the booking record.
-- Voice inputs (transcripts) are processed transiently and stored only if the user submits them as feedback evidence.
-- Personally identifiable information (name, email) is stored in Supabase only within the booking record and is not shared with third parties.
-- No payment card data is collected or stored — all transactions are cash-on-service.
-- All secrets, API credentials, Supabase keys, and internal webhook URLs are excluded from public repositories and managed via environment variables.
-- Photo evidence (base64 images) submitted during feedback is stored as a JSON string in the `image_base64_data` field and is accessible only to the platform admin.
-
----
-
-## 17. Limitations
-
-- **Real-time provider availability** depends on Google Places data, which may not reflect a provider's true operational status.
-- **Rural provider coverage** is limited — Google Places has sparse results outside major cities.
-- **Voice recognition accuracy** may vary across Pakistani accents and dialects.
-- **Simulated booking environments** differ from real operational deployments — provider availability slots are partially simulated with seed-based randomisation.
-- **Scalability under heavy traffic** has not been stress-tested — n8n is self-hosted and may require horizontal scaling.
-- **No real payment gateway** — the platform assumes cash-on-service for this prototype.
-- **Provider onboarding** relies entirely on Google Places — providers cannot self-register in this version.
-
----
-
-## 18. Future Improvements
-
-- Real-time provider GPS tracking integrated into the en-route stage.
-- Multilingual voice assistant (Urdu speech-to-text) for hands-free booking.
-- Fraud detection layer on the feedback stage to catch rating manipulation.
-- Predictive provider ranking using historical booking outcome data.
-- Reinforcement learning-based matchmaking that improves with each booking.
-- Self-service provider onboarding portal with document verification.
-- Real payment gateway integration (JazzCash / EasyPaisa).
-- Push notifications (Firebase) replacing email for time-sensitive alerts.
-
----
-
-## 19. Capstone Concept Mapping
-
-| Concept | Where it lives |
+| Area | Files |
 |---|---|
-| API endpoints | `server.ts` (`/api/proxy`, `/api/health`) + webhook-triggered n8n workflows (WF1–WF8) |
-| Database | Supabase — `bookings`, `waitlist`, `provider_scores` tables (see `/db/`) |
-| Background/cron jobs | `/n8n-workflows/WF8b_Provider_Score_Refresh_Nightly.json` — scheduled nightly |
-| Caching | Same WF8b workflow — writes to `provider_scores`; dashboard reads the cached row instead of recomputing live |
-| LLM integration | `/n8n-workflows/WF1-3_Intent_Provider_Matching_Pricing_Agent.json` — GPT-4o-mini, structured output |
-| Reporting (email) | Gmail nodes in WF4, WF5, WF6, WF7 |
+| Slots, schedule, validation, receipt, repository, booking handler | `tests/booking/` |
+| Scoring/pricing vs the original n8n code, OSM adapters, matching handler, demo data | `tests/matching/` |
+| Gemini client, validator, prompt-equals-n8n, keyword fallback, intent handler | `tests/intent/` |
+| Retries, policies, incidents, alerts, de-duplication, booking with resilience | `tests/resilience/` |
+| Reconciler, its auth, and the workflow file | `tests/reconcile/` |
+| Frontend helpers: booking response handling, keyword parser, transformer, Pakistan date | `tests/frontend/` |
+| Whole flows through `createApp()` with only HTTP faked | `tests/app.test.ts`, `tests/intent-flow.test.ts`, `tests/demo-flow.test.ts` |
+| `api/` loaded in plain Node ESM (no bundler), as Vercel runs it | `tests/api/esm.test.ts` |
+
+**Migrations against real Postgres.** These are skipped unless `TEST_DATABASE_URL` points at a **local** server; the helper refuses anything else. They create and drop their own throwaway database:
+
+```bash
+TEST_DATABASE_URL=postgresql://postgres@localhost:5432/postgres npx vitest run tests/db
+```
+
+**Checked by hand (not in CI):** the booking and match screens in Chromium with Playwright (Try again, 409 screen, no-ratings and demo labels, booking date at 00:30 PKT), and the reconcile workflow's shell step against a local stub (200 passes; 401 and missing secrets fail).
+
+**Not verified yet:** live calls to Supabase, Gemini, Nominatim, Overpass and Gmail; a Vercel deployment; a scheduled GitHub Actions run.
 
 ---
 
-## Conclusion
+## 10. Known limitations
 
-GharFix demonstrates a robust implementation of an AI-powered local services platform, using n8n as a set of specialized AI agents that each own one step of the service lifecycle — multilingual intent understanding, 7-factor provider matching, booking, service quality management, dispute resolution, and provider optimization. The React frontend routes each user action to the right workflow through a single proxy endpoint, and every workflow returns a structured reasoning trace documenting its decision, confidence, and data sources. This architecture provides a reliable, accessible, and scalable booking experience for both customers and providers in Pakistan's informal economy.
+- **Overlap gap.** The unique index only catches two bookings with the *same* start time. Two simultaneous requests for overlapping windows (16:00 and 16:30 for a 150-minute job) can both pass the pre-check. A Postgres exclusion constraint is planned as `db/003`; the repository already maps its error (23P01) to `slot_taken`.
+- **5-second email wait.** A confirm waits up to 5 s for SMTP. A slower send is recorded as failed and left to the reconciler, so if it was eventually delivered the customer can get the confirmation twice. The same can happen if SMTP succeeds but recording `confirmation_sent_at` fails.
+- **Gmail limits.** Gmail's own sending limits apply (about 500 messages a day for a personal account), and Gmail sends as the authenticated account.
+- **OpenStreetMap data.** No ratings, reviews, prices or road distance (§6). Coverage of small Pakistani businesses varies widely by area, and the public endpoints are rate-limited.
+- **Keyword parser.** It is dictionary-based. Spellings it doesn't know are missed, and the fuzzy matcher is deliberately strict to avoid false services.
+- **Unported workflows.** Quality loop, disputes, rescheduling and the provider dashboard still need n8n (503 without it). Their screens still check `response.ok` before reading the body.
+- **Scheduling.** GitHub may delay or skip scheduled runs, and the reconcile workflow only runs once it is on the default branch.
+- **Time limits.** Worst-case latency when every dependency times out (Supabase 8 s × 3 tries, Gemini 8 s × 2) is long. Check the Vercel function duration limit for your plan.
+
+---
+
+## 11. The original n8n design
+
+The JSON in `n8n-workflows/` is kept unchanged as the design record. The first four are the basis of the port; the rest are not ported yet:
+
+| Workflow | Purpose |
+|---|---|
+| WF1–WF3 | intent extraction (gpt-4o-mini), Google Places matching, 7-factor scoring, pricing |
+| WF4 | slots with travel buffer; confirm with a race-condition pre-check |
+| WF5 | service quality loop: en route → arrived → completed → feedback, with sentiment and rating |
+| WF6 | dispute rules (no-show, provider cancelled, quality, price, overrun) with tiered refunds |
+| WF7 | cancellation and auto-reschedule with penalties, compensation and waitlist |
+| WF8 / WF8b | provider dashboard, and a nightly `provider_scores` refresh |
+
+The demo video ([assets/demo-video.mp4](assets/demo-video.mp4)) shows the original n8n version, which used Google Places providers. The earlier README's latency/cost tables and sample reasoning traces described that deployment and are in git history; they were not re-measured for the port.
+
+---
+
+## 12. Privacy and security
+
+- **Secrets:** they come only from environment variables (`.env.example` lists names only). The Supabase service-role key is used server-side, in request headers only.
+- **Logs:** one JSON line per event, with secret-looking keys redacted and email addresses masked. The intent text is not logged.
+- **Outbound requests:** request bodies are built with `JSON.stringify`, and query strings with `URLSearchParams` (PostgREST `in.()` values are quoted). User text never reaches the Overpass query; only table entries and the service's own letters do.
+- **Model output** is treated as untrusted input and validated.
+- **Confirmation emails** HTML-escape all user-supplied text.
+- **`workflow_incidents`** holds no free text, and RLS keeps the anon key out.
+- **Payments:** none are taken (cash on service).
 
 ---
 

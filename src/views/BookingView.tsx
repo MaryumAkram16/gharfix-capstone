@@ -3,11 +3,12 @@ import { useState, useEffect, useRef } from 'react';
 import {
   CalendarCheck, MapPin, Clock, ShieldCheck,
   Phone, MessageSquare, Star, CheckCircle2, Copy, Loader2,
-  AlertCircle, ArrowLeft, Navigation2
+  AlertCircle, ArrowLeft, Navigation2, RotateCcw
 } from 'lucide-react';
 import { saveBookingToStorage } from './BookingsListView';
 import { AppLanguage } from '../App';
 import { getUserProfile } from '../lib/profile';
+import { interpretBookingResponse, networkFailure, newIdempotencyKey, type BookingOutcome } from '../lib/bookingResponse';
 
 export interface BookingPayload {
   action: 'confirm';
@@ -54,8 +55,12 @@ export function BookingView({ payload, onBack, onTrack, appLanguage }: BookingVi
   const [phase, setPhase] = useState<'loading' | 'success' | 'slot_taken' | 'error'>('loading');
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
+  const [retryable, setRetryable] = useState(false);
   const [copied, setCopied] = useState(false);
   const hasFired = useRef(false);
+  // One request per booking attempt: built once, then resent unchanged by "Try again",
+  // so the server sees the same idempotency key and body and replays instead of double-booking.
+  const requestRef = useRef<{ forPayload: BookingPayload; body: string; stored: Record<string, unknown> } | null>(null);
 
   const t = {
     english: {
@@ -93,76 +98,54 @@ export function BookingView({ payload, onBack, onTrack, appLanguage }: BookingVi
     callBookingWebhook(payload);
   }, []);
 
+  /** Builds the request for this payload once; later calls (retries) get the identical request. */
+  const requestFor = (data: BookingPayload) => {
+    if (requestRef.current?.forPayload === data) return requestRef.current;
+    const { alternatives: alternativesForStorage, ...webhookPayload } = data;
+    const profile = getUserProfile();
+    const enrichedPayload = {
+      ...webhookPayload,
+      user_name: webhookPayload.user_name || profile?.name || 'Guest User',
+      user_email: webhookPayload.user_email || profile?.email || '',
+      idempotency_key: newIdempotencyKey(),
+    };
+    requestRef.current = {
+      forPayload: data,
+      body: JSON.stringify({ endpoint: 'khadmat-booking', ...enrichedPayload }),
+      stored: { ...enrichedPayload, alternatives: alternativesForStorage ?? [] },
+    };
+    return requestRef.current;
+  };
+
   const callBookingWebhook = async (data: BookingPayload) => {
     setPhase('loading');
-    try {
-      const { alternatives: alternativesForStorage, ...webhookPayload } = data;
-      
-      // Get user profile and add email to payload if not already present
-      const profile = getUserProfile();
-      const enrichedPayload = {
-        ...webhookPayload,
-        user_name: webhookPayload.user_name || profile?.name || 'Guest User',
-        user_email: webhookPayload.user_email || profile?.email || '',
-      };
+    const request = requestFor(data);
 
+    let outcome: BookingOutcome;
+    try {
       const response = await fetch('/api/proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          endpoint: 'khadmat-booking',
-          ...enrichedPayload
-        }),
+        body: request.body,
       });
-
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
+      // Body first: 409 slot_taken and 400 validation_error carry the message to show.
       const responseText = await response.text();
-      let json: any = {};
-      
-      try {
-        if (responseText) {
-          let parsed = JSON.parse(responseText);
-          // Unpack single-item array from common webhook patterns (e.g. n8n)
-          json = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : parsed;
-        } else {
-          // If response is empty but OK, synthesize a basic success if we have enough info
-          // or throw error depending on requirements. 
-          // Usually n8n webhooks might return empty or just "OK".
-          console.warn('Empty response from booking webhook');
-          json = { status: 'confirmed', booking_id: `BK-${Math.random().toString(36).substr(2, 9).toUpperCase()}` };
-        }
-      } catch (parseErr) {
-        console.error('Failed to parse booking response:', responseText);
-        throw new Error('Invalid response from server.');
-      }
+      outcome = interpretBookingResponse(response.status, responseText);
+    } catch (err) {
+      console.error('Booking request failed:', err);
+      outcome = networkFailure();
+    }
 
-      console.log('Booking response:', json);
-      console.log('Alternatives for storage:', alternativesForStorage?.length ?? 0);
-
-      if (json.status === 'slot_taken') {
-        setErrorMsg(json.message || 'Yeh slot abhi available nahi.');
-        setPhase('slot_taken');
-      } else if (json.status === 'confirmed' || json.booking_id) {
-        setReceipt(json);
-        saveBookingToStorage(json, { ...enrichedPayload, alternatives: alternativesForStorage ?? [] });
-        setPhase('success');
-      } else if (json.status === 'validation_error') {
-        setErrorMsg(json.message || 'Booking failed.');
-        setPhase('error');
-      } else {
-        if (json.booking_id) {
-          setReceipt(json);
-          saveBookingToStorage(json, { ...enrichedPayload, alternatives: alternativesForStorage ?? [] });
-          setPhase('success');
-        } else {
-          setErrorMsg('Unexpected response from server.');
-          setPhase('error');
-        }
-      }
-    } catch (err: any) {
-      console.error('Booking error:', err);
-      setErrorMsg('Network error. Please try again.');
+    if (outcome.kind === 'confirmed') {
+      setReceipt(outcome.receipt as unknown as Receipt);
+      saveBookingToStorage(outcome.receipt, request.stored);
+      setPhase('success');
+    } else if (outcome.kind === 'slot_taken') {
+      setErrorMsg(outcome.message);
+      setPhase('slot_taken');
+    } else {
+      setErrorMsg(outcome.message);
+      setRetryable(outcome.retryable);
       setPhase('error');
     }
   };
@@ -245,9 +228,18 @@ export function BookingView({ payload, onBack, onTrack, appLanguage }: BookingVi
           <p className="text-on-surface font-black text-xl">Booking Failed</p>
           <p className="text-on-surface-variant text-sm leading-relaxed">{errorMsg}</p>
         </div>
+        {retryable && payload && (
+          <button
+            onClick={() => callBookingWebhook(payload)}
+            className="w-full max-w-xs py-4 bg-primary text-white rounded-2xl font-black text-sm shadow-lg shadow-primary/20 flex items-center justify-center gap-2 active:scale-95 transition-all"
+          >
+            <RotateCcw className="w-4 h-4" />
+            Try Again
+          </button>
+        )}
         <button
           onClick={onBack}
-          className="w-full max-w-xs py-4 bg-on-surface text-white rounded-2xl font-black text-sm active:scale-95 transition-all"
+          className={`w-full max-w-xs py-4 rounded-2xl font-black text-sm active:scale-95 transition-all ${retryable ? 'border border-outline-variant/40 text-on-surface-variant' : 'bg-on-surface text-white'}`}
         >
           Go Back
         </button>

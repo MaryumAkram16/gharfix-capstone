@@ -21,9 +21,12 @@ export interface ProviderCardData {
   id: string;
   type: 'top_match' | 'alternative';
   name: string;
-  rating: number;
-  reviews: number;
+  /** null when the source has none (OpenStreetMap listings): shown as "no ratings yet", never as 0. */
+  rating: number | null;
+  reviews: number | null;
   distance_km: number;
+  distance_type?: string;
+  source?: string;
   price_from: number;
   computed_score: number;
   score_breakdown?: Record<string, number>;
@@ -51,7 +54,11 @@ export interface MatchViewData {
   alternative_cards: ProviderCardData[];
   nearby_areas?: string[]; // Nearby area suggestions for no-match fallback
   no_match_reason?: string; // Reason why no providers found
+  /** True when the providers are fictional demo data (data_source "demo_seed"). The UI must label them. */
+  is_demo: boolean;
 }
+
+export const DEMO_BADGE = 'Demo data';
 
 // ── NEARBY AREAS DATABASE ──
 // Maps each area to nearby alternatives (for graceful no-match fallback)
@@ -161,7 +168,8 @@ export function transformMatchData(backendResponse: any): MatchViewData {
       header: { service: 'N/A', location: 'N/A', providers_found: 0 },
       pricing_card: { title: 'N/A', total: 0, currency: 'PKR', breakdown: [], badges: [] },
       top_provider_card: null,
-      alternative_cards: []
+      alternative_cards: [],
+      is_demo: false,
     };
   }
 
@@ -185,6 +193,9 @@ export function transformMatchData(backendResponse: any): MatchViewData {
   if (raw.matching_result) raw = raw.matching_result;
   if (raw.data && typeof raw.data === 'object' && !Array.isArray(raw.data)) raw = raw.data;
   if (raw.body && typeof raw.body === 'object' && !Array.isArray(raw.body)) raw = raw.body;
+
+  // Read before the WF3 flattening below drops it.
+  const isDemo = raw.data_source === 'demo_seed';
 
   // ── WF3 multi-service shape ──────────────────────────────────────────────
   // WF3 returns: { status, workflow, services: [{ service, provider, alternatives, pricing }], summary }
@@ -256,9 +267,11 @@ export function transformMatchData(backendResponse: any): MatchViewData {
     id: p.id || p.place_id || 'N/A',
     type,
     name: p.name || 'Provider',
-    rating: p.rating || 0,
-    reviews: p.review_count || p.reviews || 0,
+    rating: typeof p.rating === 'number' ? p.rating : null,
+    reviews: typeof p.review_count === 'number' ? p.review_count : typeof p.reviews === 'number' ? p.reviews : null,
     distance_km: p.distance_km || 0,
+    distance_type: typeof p.distance_type === 'string' ? p.distance_type : undefined,
+    source: typeof p.source === 'string' ? p.source : undefined,
     price_from: p.base_rate_pkr || p.price_from || 0,
     computed_score: p.computed_score || 0,
     score_breakdown: p.score_breakdown || null,
@@ -268,7 +281,7 @@ export function transformMatchData(backendResponse: any): MatchViewData {
     location: p.coordinates
       ? { lat: p.coordinates.lat, lng: p.coordinates.lng, address: p.address || '' }
       : (p.location || { lat: 0, lng: 0, address: '' }),
-    badges: Array.isArray(p.badges) ? p.badges : [],
+    badges: [...(p.source === 'demo_seed' ? [DEMO_BADGE] : []), ...(Array.isArray(p.badges) ? p.badges : [])],
     cta: 'Select Provider',
     availability_slots: Array.isArray(p.availability_slots) ? p.availability_slots : [],
   });
@@ -309,13 +322,17 @@ export function transformMatchData(backendResponse: any): MatchViewData {
 
   const decorateBadges = (p: ProviderCardData) => {
     if (p.verified && !p.badges.includes('Verified')) p.badges.push('Verified');
-    if (p.rating >= 4.8 && !p.badges.includes('Highly Rated')) p.badges.push('Highly Rated');
+    if (p.rating !== null && p.rating >= 4.8 && !p.badges.includes('Highly Rated')) p.badges.push('Highly Rated');
     if (p.distance_km <= 5 && !p.badges.includes('Nearby')) p.badges.push('Nearby');
   };
 
   if (topProvider) {
     if (!topProvider.badges.includes('Best Match')) topProvider.badges.unshift('Best Match');
     decorateBadges(topProvider);
+  }
+  // "Demo data" always comes first, so it is never hidden behind other badges.
+  for (const card of [topProvider, ...alternativeCards]) {
+    if (card && card.badges.includes(DEMO_BADGE)) card.badges = [DEMO_BADGE, ...card.badges.filter((b) => b !== DEMO_BADGE)];
   }
 
   alternativeCards.forEach((alt) => decorateBadges(alt));
@@ -345,5 +362,6 @@ export function transformMatchData(backendResponse: any): MatchViewData {
     alternative_cards: alternativeCards.sort((a, b) => b.computed_score - a.computed_score),
     nearby_areas: nearbyAreas,
     no_match_reason: noMatchReason,
+    is_demo: isDemo,
   };
 }
