@@ -84,6 +84,17 @@ function receiptFromRow(row: BookingRow, now: Date): Receipt {
   });
 }
 
+/**
+ * Confirm success body: the WF4 receipt plus two additive fields.
+ * `status` stays "confirmed" (the frontend switches on it: this request
+ * succeeded). `booking_status` is the row's status now, which on a replay may
+ * already be cancelled, rescheduled, etc. `replayed` says whether this answer
+ * came from an earlier request with the same idempotency key.
+ */
+function confirmedBody(row: BookingRow, now: Date, replayed: boolean): Record<string, unknown> {
+  return { ...receiptFromRow(row, now), booking_status: row.status ?? 'confirmed', replayed };
+}
+
 function toNewBooking(req: ConfirmRequest, bookingId: string, now: Date, fingerprint: string | null): NewBooking {
   return {
     booking_id: bookingId,
@@ -185,8 +196,8 @@ function replay(existing: BookingRow, fingerprint: string | null, deps: BookingD
     log.warn('booking.idempotency_key_reused');
     return fail('idempotency_key_reused', 'This idempotency_key was already used for a different booking request.');
   }
-  log.info('booking.replayed', { booking_id: existing.booking_id });
-  return ok(receiptFromRow(existing, deps.now()) as unknown as Record<string, unknown>);
+  log.info('booking.replayed', { booking_id: existing.booking_id, booking_status: existing.status });
+  return ok(confirmedBody(existing, deps.now(), true));
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -270,7 +281,7 @@ async function confirm(body: unknown, deps: BookingDeps): Promise<HttpResult> {
   const receipt = receiptFromRow(row, deps.now());
   log.info('booking.confirmed', { booking_id: receipt.booking_id });
   await sendConfirmation(receipt, deps, log);
-  return ok(receipt as unknown as Record<string, unknown>);
+  return ok(confirmedBody(row, deps.now(), false));
 }
 
 /** Entry point for POST khadmat-booking. Never throws. */

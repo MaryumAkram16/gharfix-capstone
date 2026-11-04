@@ -166,11 +166,23 @@ describe('confirm: idempotency', () => {
     const second = await handleBookingRequest({ ...keyed, slot: '16:00' }, deps); // same slot, other spelling
 
     expect(first.status).toBe(200);
-    expect(second).toEqual(first);
+    expect(first.body).toMatchObject({ booking_status: 'confirmed', replayed: false });
+    expect(second).toEqual({ status: 200, body: { ...first.body, replayed: true } });
     expect(db.rows).toHaveLength(1);
     expect(db.rows[0].idempotency_key).toBe('idem-test-0001');
     expect(email.sent).toHaveLength(1);
     expect(events()).toContain('booking.replayed');
+  });
+
+  it("a replay reports the booking's current status", async () => {
+    await handleBookingRequest(keyed, deps);
+    db.rows[0].status = 'cancelled';
+
+    const res = await handleBookingRequest(keyed, deps);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ booking_id: 'BK-TEST-0001', status: 'confirmed', booking_status: 'cancelled', replayed: true });
+    expect(log.records.find((r) => r.event === 'booking.replayed')).toMatchObject({ booking_status: 'cancelled' });
   });
 
   it('replays when a concurrent request with the same key wins the insert', async () => {
