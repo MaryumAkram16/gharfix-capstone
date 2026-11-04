@@ -58,6 +58,12 @@ export interface BookingRepository {
   insert(row: NewBooking): Promise<BookingRow>;
 }
 
+/** Today's load per provider, for provider matching (WF2 "Fetch Provider Capacity"). */
+export interface CapacityReader {
+  /** Count of active bookings on `date` for each of `providerIds` (absent = 0). */
+  activeBookingCounts(date: string, providerIds: string[]): Promise<Map<string, number>>;
+}
+
 export type ConflictTarget = 'slot' | 'idempotency_key' | 'booking_id' | 'unknown';
 
 /** Postgres refused the insert because it would duplicate a unique key. */
@@ -141,7 +147,7 @@ export interface SupabaseRepositoryOptions {
 export function createSupabaseRepository(
   config: SupabaseConfig,
   { fetch: fetchImpl = fetch, log }: SupabaseRepositoryOptions = {},
-): BookingRepository {
+): BookingRepository & CapacityReader {
   const endpoint = new URL('/rest/v1/bookings', config.url).toString();
   const headers = {
     apikey: config.serviceRoleKey,
@@ -226,6 +232,21 @@ export function createSupabaseRepository(
         throw new RepositoryError('unexpected', 'Supabase POST did not return the inserted row');
       }
       return rows[0];
+    },
+
+    async activeBookingCounts(date, providerIds) {
+      const counts = new Map<string, number>();
+      if (providerIds.length === 0) return counts;
+      const params = new URLSearchParams({
+        select: 'provider_id',
+        booking_date: `eq.${date}`,
+        status: pgIn(ACTIVE_STATUSES),
+        provider_id: pgIn(providerIds),
+      });
+      const rows = (await request('GET', params)) as Array<{ provider_id: string | null }>;
+      if (!Array.isArray(rows)) throw new RepositoryError('unexpected', 'Supabase GET returned a non-array body');
+      for (const { provider_id: id } of rows) if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+      return counts;
     },
   };
 }

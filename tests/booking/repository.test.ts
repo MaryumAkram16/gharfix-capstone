@@ -159,6 +159,27 @@ describe('insert', () => {
   });
 });
 
+describe('activeBookingCounts', () => {
+  it('counts active bookings per provider for one date', async () => {
+    const f = fakeFetch(json(200, [{ provider_id: 'osm:node/1' }, { provider_id: 'osm:node/1' }, { provider_id: 'osm:way/2' }]));
+    const repo = createSupabaseRepository(config, { fetch: f.impl });
+    const counts = await repo.activeBookingCounts('2026-11-04', ['osm:node/1', 'osm:way/2', 'osm:node/3']);
+
+    expect([...counts]).toEqual([['osm:node/1', 2], ['osm:way/2', 1]]);
+    const params = f.calls[0].url.searchParams;
+    expect(params.get('booking_date')).toBe('eq.2026-11-04');
+    expect(params.get('status')).toBe('in.("confirmed","in_progress")');
+    expect(params.get('provider_id')).toBe('in.("osm:node/1","osm:way/2","osm:node/3")');
+    expect(params.get('select')).toBe('provider_id');
+  });
+
+  it('makes no request for an empty list', async () => {
+    const f = fakeFetch();
+    expect((await createSupabaseRepository(config, { fetch: f.impl }).activeBookingCounts('2026-11-04', [])).size).toBe(0);
+    expect(f.calls).toHaveLength(0);
+  });
+});
+
 describe('failures', () => {
   const cases: Array<[string, Response | Error, 'unavailable' | 'unexpected']> = [
     ['network error', new TypeError('fetch failed'), 'unavailable'],
