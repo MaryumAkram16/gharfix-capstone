@@ -32,18 +32,21 @@ function ProviderCard({ provider, isSelectedSlot, onSelectSlot, onBook, isTopMat
       earliestSlot: "Earliest Slot", trust: "Trust & Quality Scores",
       pickTime: "Pick a Time Slot", book: "Book This Provider",
       providerIdLabel: "Provider ID",
+      noRatings: "No ratings or reviews yet (OpenStreetMap listing)", straightLine: "straight line",
     },
     urdu: {
       reviews: "تبصرے", score: "اسکور", startsFrom: "شروع سے",
       earliestSlot: "سب سے پہلے وقت", trust: "بھروسہ اور معیار",
       pickTime: "وقت کا انتخاب کریں", book: "یہ فراہم کنندہ بک کریں",
       providerIdLabel: "پرووائیڈر آئی ڈی",
+      noRatings: "ابھی کوئی ریٹنگ یا تبصرہ نہیں (اوپن اسٹریٹ میپ)", straightLine: "سیدھی لکیر",
     },
     roman_urdu: {
       reviews: "reviews", score: "Score", startsFrom: "Starts From",
       earliestSlot: "Earliest Slot", trust: "Trust & Quality Scores",
       pickTime: "Pick a Time Slot", book: "Book This Provider",
       providerIdLabel: "Provider ID",
+      noRatings: "Abhi koi rating ya review nahi (OpenStreetMap listing)", straightLine: "seedhi line",
     },
   }[appLanguage];
 
@@ -90,15 +93,25 @@ function ProviderCard({ provider, isSelectedSlot, onSelectSlot, onBook, isTopMat
                 {provider.id}
               </span>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1">
-                <Star className="w-3.5 h-3.5 text-secondary fill-secondary" />
-                <span className="text-xs font-black text-secondary">{provider.rating}</span>
+            {provider.rating !== null ? (
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
+                  <Star className="w-3.5 h-3.5 text-secondary fill-secondary" />
+                  <span className="text-xs font-black text-secondary">{provider.rating}</span>
+                </div>
+                {provider.reviews !== null && (
+                  <span className="text-[10px] text-on-surface-variant/60 font-medium">({provider.reviews} {translations.reviews})</span>
+                )}
               </div>
-              <span className="text-[10px] text-on-surface-variant/60 font-medium">({provider.reviews} {translations.reviews})</span>
-            </div>
+            ) : (
+              // OpenStreetMap has no ratings or reviews: say so instead of showing 0 stars.
+              <div className="flex items-center gap-1">
+                <Star className="w-3.5 h-3.5 text-outline" />
+                <span className="text-[10px] text-on-surface-variant font-medium">{translations.noRatings}</span>
+              </div>
+            )}
             <p className="text-[10px] text-outline mt-0.5 font-medium">
-              {provider.distance_km} km away
+              {provider.distance_km} km away{provider.distance_type === 'straight_line' ? ` (${translations.straightLine})` : ''}
               {provider.location?.address ? ` · ${provider.location.address}` : ''}
             </p>
           </div>
@@ -282,7 +295,7 @@ export function MatchView({ data, onBook, appLanguage, onSearchAgain }: MatchVie
       tryAgain: "Try Again",
       found: "Found", estimate: "Estimated Cost", total: "approx. total",
       disclaimer: "Final price may vary slightly based on actual work required.",
-      topRated: "Top Rated Match", alternative: "Alternative Providers",
+      topRated: "Best Match", alternative: "Alternative Providers",
       secure: "Secure Booking · Protected by KhidmatGaar",
       showMore: "Show More Providers", showLess: "Show Less Providers",
       changeSearch: "Search Again",
@@ -310,7 +323,7 @@ export function MatchView({ data, onBook, appLanguage, onSearchAgain }: MatchVie
       tryAgain: "Try Again",
       found: "Found", estimate: "Estimated Cost", total: "approx. total",
       disclaimer: "Final price may vary slightly based on actual work required.",
-      topRated: "Top Rated Match", alternative: "Alternative Providers",
+      topRated: "Best Match", alternative: "Alternative Providers",
       secure: "Secure Booking · Protected by KhidmatGaar",
       showMore: "Show More Providers", showLess: "Show Less Providers",
       changeSearch: "Search Again",
