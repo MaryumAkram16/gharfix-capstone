@@ -121,6 +121,20 @@ describe('USE_DEMO_PROVIDERS=1', () => {
     expect(logs.filter((r) => r.event === 'incident.recorded' && String(r.step).startsWith('osm.'))).toEqual([]);
   });
 
+  it('serves Gulshan-e-Ravi from demo data when OSM is down (was a 503 on Vercel)', async () => {
+    const net = fakeInternet('down');
+    const gulshan = async (input: string) =>
+      new URL(input).host === 'nominatim.openstreetmap.org'
+        ? Response.json([{ lat: '31.5536', lon: '74.2706', display_name: 'Gulshan-e-Ravi, Lahore, Pakistan' }])
+        : net.fetch(input);
+    const res = await createApp({ env: { USE_DEMO_PROVIDERS: '1' }, fetch: gulshan, logSink: () => {} })
+      .proxy({ ...match, location: 'Gulshan-e-Ravi, Lahore' }, { requestId: null });
+    const body = res.body as any;
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ data_source: 'demo_seed', data_notes: { demo_reason: 'osm_unavailable' } });
+    expect(body.services[0].provider).toMatchObject({ id: 'demo:lhr-gulshanravi-home', name: '[DEMO] Gulshan-e-Ravi Home Repairs' });
+  });
+
   it('still answers 503 (not "no providers") when OSM is down and the demo has nothing for the area', async () => {
     const net = fakeInternet('down');
     const karachi = async (input: string) =>
