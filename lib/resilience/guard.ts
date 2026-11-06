@@ -1,3 +1,4 @@
+import type { BookingRecords } from '../booking/records.js';
 import type { CapacityReader, ReconcileReader, BookingRepository } from '../booking/repository.js';
 import type { EmailSender } from '../email/types.js';
 import type { IntentParser } from '../intent/types.js';
@@ -83,6 +84,15 @@ export function resilientRepository<R extends Repo>(repo: R, ctx: GuardContext):
     wrapped.findUnconfirmed = (w) => guarded(ctx, 'supabase.findUnconfirmed', SUPABASE_READ, () => read(w));
   }
   return wrapped as R;
+}
+
+/** One-booking reads and writes (WF5/6/7). Reads are retried; the update is not (a compare-and-set must not run twice). */
+export function resilientRecords(records: BookingRecords, ctx: GuardContext): BookingRecords {
+  return {
+    find: (id) => guarded(ctx, 'supabase.findBooking', SUPABASE_READ, () => records.find(id)),
+    update: (id, patch, ifStatus) => guarded(ctx, 'supabase.updateBooking', NO_RETRY, () => records.update(id, patch, ifStatus), `booking ${id}`),
+    providerHistory: (providerId) => guarded(ctx, 'supabase.providerHistory', SUPABASE_READ, () => records.providerHistory(providerId)),
+  };
 }
 
 export function resilientCapacity(capacity: CapacityReader, ctx: GuardContext): CapacityReader {

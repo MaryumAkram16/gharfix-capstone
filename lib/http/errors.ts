@@ -14,6 +14,9 @@ export type ErrorCode =
   | 'validation_error'
   | 'payload_too_large'
   | 'unauthorized'
+  | 'forbidden'
+  | 'not_found'
+  | 'conflict'
   | 'slot_taken'
   | 'idempotency_key_reused'
   | 'service_unavailable'
@@ -24,6 +27,9 @@ export const STATUS_FOR: Record<ErrorCode, number> = {
   validation_error: 400,
   payload_too_large: 413,
   unauthorized: 401,
+  forbidden: 403,
+  not_found: 404,
+  conflict: 409,
   slot_taken: 409,
   idempotency_key_reused: 422,
   service_unavailable: 503,

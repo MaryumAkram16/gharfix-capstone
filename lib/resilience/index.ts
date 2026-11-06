@@ -5,7 +5,7 @@ import { createSupabaseIncidentStore, type IncidentStore } from './incidents.js'
 import { createIncidentRecorder, DEFAULT_DEDUPE_WINDOW_MS, type IncidentRecorder } from './recorder.js';
 
 export {
-  guarded, resilientCapacity, resilientDirectory, resilientEmail, resilientGeocoder, resilientParser, resilientRepository, type GuardContext,
+  guarded, resilientCapacity, resilientRecords, resilientDirectory, resilientEmail, resilientGeocoder, resilientParser, resilientRepository, type GuardContext,
 } from './guard.js';
 export type { IncidentRecorder } from './recorder.js';
 

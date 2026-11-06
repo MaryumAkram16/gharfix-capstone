@@ -13,7 +13,8 @@ GharFix books home-service providers (plumbers, electricians, AC technicians…)
 | `khadmat-intent` | WF1 (n8n + OpenAI) | `lib/intent/` (Gemini, keyword fallback) |
 | `khadmat-provider-match` | WF2 + WF3 (n8n + Google Maps) | `lib/matching/` (OpenStreetMap) |
 | `khadmat-booking` | WF4 (n8n + Gmail node) | `lib/booking/` (Supabase, Nodemailer) |
-| `khadmat-quality`, `-dispute`, `-reschedule`, `-provider-dashboard` | WF5–WF8 | **not ported yet**: forwarded to n8n only if `N8N_WEBHOOK_BASE_URL` is set, otherwise they answer 503 |
+| `khadmat-dispute` | WF6 (n8n + Gmail node) | `lib/dispute/` (Supabase, Nodemailer), §8 |
+| `khadmat-quality`, `-reschedule`, `-provider-dashboard` | WF5, WF7, WF8 | **not ported yet**: forwarded to n8n only if `N8N_WEBHOOK_BASE_URL` is set, otherwise they answer 503 |
 
 ---
 
@@ -26,11 +27,12 @@ GharFix books home-service providers (plumbers, electricians, AC technicians…)
 5. [Intent parsing](#5-intent-parsing)
 6. [Provider matching, pricing and the limits of OpenStreetMap](#6-provider-matching-pricing-and-the-limits-of-openstreetmap)
 7. [Demo-data fallback](#7-demo-data-fallback)
-8. [Self-healing: retries, incidents, alerts, reconcile](#8-self-healing-retries-incidents-alerts-reconcile)
-9. [Tests](#9-tests)
-10. [Known limitations](#10-known-limitations)
-11. [The original n8n design](#11-the-original-n8n-design)
-12. [Privacy and security](#12-privacy-and-security)
+8. [After the booking: disputes](#8-after-the-booking-disputes)
+9. [Self-healing: retries, incidents, alerts, reconcile](#9-self-healing-retries-incidents-alerts-reconcile)
+10. [Tests](#10-tests)
+11. [Known limitations](#11-known-limitations)
+12. [The original n8n design](#12-the-original-n8n-design)
+13. [Privacy and security](#13-privacy-and-security)
 
 ---
 
@@ -97,7 +99,7 @@ All routes are wired in one place, `lib/app.ts` (`createApp()`), used by both th
 | `db/` | original schema files (unchanged) + numbered migrations `001_*`, `002_*` with rollbacks |
 | `db/seed/demo_providers.json` | fictional demo providers (§7) |
 | `n8n-workflows/` | the original workflows (design record, not executed) |
-| `tests/` | Vitest suites (§9) |
+| `tests/` | Vitest suites (§10) |
 
 ---
 
@@ -163,7 +165,7 @@ Not yet done: a deployment to Vercel has not been made from this branch.
 **How confirmation emails are made reliable**
 
 7. **Email never breaks a booking.** The confirm waits at most 5 s for SMTP. A failure is logged and recorded as an incident; the booking still returns 200.
-8. **`confirmation_sent_at`** (`db/002`) is set only when SMTP accepted the message: not for the console fallback, not on failure. `api/reconcile.ts` re-sends the rest (§8).
+8. **`confirmation_sent_at`** (`db/002`) is set only when SMTP accepted the message: not for the console fallback, not on failure. `api/reconcile.ts` re-sends the rest (§9).
 
 ---
 
@@ -239,7 +241,7 @@ Because every OSM provider lacks the same three factors, they don't change the r
 
 None of these env vars is required. The functions that run provider matching (`api/proxy.ts`, `api/intent.ts`, `api/provider-match.ts`) set `export const config = { maxDuration: 60 }` (Vercel's in-file config for Node.js `/api` routes), so a search bounded by about 25 s (5 s + 20 s) fits with room for Supabase and Gemini.
 
-Every final failure of the geocoder or the directory is recorded as an incident (§8). The answer is then a 503, unless the demo fallback is on (§7).
+Every final failure of the geocoder or the directory is recorded as an incident (§9). The answer is then a 503, unless the demo fallback is on (§7).
 
 Not tested live: this environment's network policy blocks `nominatim.openstreetmap.org`, `overpass-api.de` and the mirror, so the adapters and the mirror logic are tested against fakes built from the documented response formats. The public services have usage limits (Nominatim: at most 1 request/second with an identifying User-Agent); for real traffic, point these URLs at your own or a commercial instance.
 
@@ -263,7 +265,29 @@ Off by default. With `USE_DEMO_PROVIDERS=1` (exactly `1`), matching falls back t
 
 ---
 
-## 8. Self-healing: retries, incidents, alerts, reconcile
+## 8. After the booking: disputes
+
+`khadmat-dispute` (WF6) is ported in `lib/dispute/`. The five rule sets (no-show, provider cancelled, quality complaint, price disagreement, overrun) keep n8n's thresholds and amounts; `tests/dispute/decide.test.ts` runs the original n8n Code nodes on the same inputs and compares the results.
+
+**What changed, and why:**
+- **Facts come from the booking row, not the request.** n8n refunded the `price_pkr` the browser sent and emailed the `user_email` the browser sent. The port reads price, final price, provider, date, slot and email from Supabase by `booking_id`. The request only carries the customer's claim (rating, review, extra charge, durations).
+- **The caller's email must match the booking's** (case-insensitive), otherwise 403. This is a check, not authentication: the app has no login yet.
+- **No invented inputs:**
+  - The provider's cancellation rate is computed from their bookings (`no_show` + `provider_cancelled` out of all), instead of n8n's assumed 12%.
+  - A complaint with no rating goes to a person (`escalated_to_human`, severity `UNRATED`). n8n assumed 1/5, so any written complaint became a CRITICAL 50% refund.
+  - A price dispute with no recorded final price and no customer figure goes to a person. n8n assumed PKR 0 charged and always answered "no overcharge".
+  - An overrun dispute must send both durations (n8n assumed 60 and 90 minutes).
+- **Urgency uses the booked slot in Pakistan time.** n8n used midnight UTC of the date.
+- **Invalid requests stop with a 400.** In n8n an unknown `dispute_type` or missing `booking_id` still ran the overrun branch and PATCHed `booking_id=eq.undefined`.
+- **The status change is a compare-and-set** on the status that was read, so two submissions cannot both apply (the second gets 409 and can retry). Repeating the same dispute answers again with `already_recorded: true`, without a second update or email.
+- **Texts no longer promise what nothing does** (n8n: "BLACKLISTED — will not appear in future WF2 results"; matching has no blacklist, so the port says "suspension recommended" and leaves it to a person).
+- **Self-healing:** Supabase reads are retried, the update is not; every final failure is an incident with an alert. The dispute email goes out after the status is saved; if it fails, the response says `email: "failed"` and the dispute stands.
+
+Refunds, compensation and penalties are decisions recorded in the response and on the booking (`status`, `previous_status`, `flagged_for_review`); no money moves.
+
+---
+
+## 9. Self-healing: retries, incidents, alerts, reconcile
 
 **Retries only where a repeat cannot act twice** (`lib/resilience/policies.ts`):
 
@@ -293,7 +317,7 @@ There is no free-text column, so no secret or customer data can be stored. Row-l
 
 ---
 
-## 9. Tests
+## 10. Tests
 
 ```bash
 npm test
@@ -311,9 +335,10 @@ Every external dependency is faked in the unit tests: Supabase, Gemini, Nominati
 | Scoring/pricing vs the original n8n code, OSM adapters, matching handler, demo data | `tests/matching/` |
 | Gemini client, validator, prompt-equals-n8n, keyword fallback, intent handler | `tests/intent/` |
 | Retries, policies, incidents, alerts, de-duplication, booking with resilience | `tests/resilience/` |
+| Dispute rules vs the original n8n code, dispute handler (ownership, compare-and-set, email) | `tests/dispute/` |
 | Reconciler, its auth, and the workflow file | `tests/reconcile/` |
 | Frontend helpers: booking response handling, keyword parser, transformer, Pakistan date | `tests/frontend/` |
-| Whole flows through `createApp()` with only HTTP faked | `tests/app.test.ts`, `tests/intent-flow.test.ts`, `tests/demo-flow.test.ts` |
+| Whole flows through `createApp()` with only HTTP faked | `tests/app.test.ts`, `tests/intent-flow.test.ts`, `tests/demo-flow.test.ts`, `tests/google-flow.test.ts`, `tests/dispute-flow.test.ts` |
 | `api/` loaded in plain Node ESM (no bundler), as Vercel runs it | `tests/api/esm.test.ts` |
 
 **Migrations against real Postgres.** These are skipped unless `TEST_DATABASE_URL` points at a **local** server; the helper refuses anything else. They create and drop their own throwaway database:
@@ -324,11 +349,13 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/postgres npx vitest run t
 
 **Checked by hand (not in CI):** the booking and match screens in Chromium with Playwright (Try again, 409 screen, no-ratings and demo labels, booking date at 00:30 PKT), and the reconcile workflow's shell step against a local stub (200 passes; 401 and missing secrets fail).
 
-**Not verified yet:** live calls to Supabase, Gemini, Google Places, Nominatim, Overpass and Gmail; a Vercel deployment; a scheduled GitHub Actions run.
+**Verified live** (production Vercel logs, 2026-11-06): a chat message parsed by Gemini, providers found with Google Places around a Nominatim-geocoded location, a booking saved in Supabase, and its confirmation sent through Gmail SMTP.
+
+**Not verified yet:** Overpass from Vercel (it timed out in every logged request, so the demo fallback or Google covered it); disputes against the real database (tested with fakes only); a scheduled GitHub Actions run.
 
 ---
 
-## 10. Known limitations
+## 11. Known limitations
 
 - **Overlap gap.** The unique index only catches two bookings with the *same* start time. Two simultaneous requests for overlapping windows (16:00 and 16:30 for a 150-minute job) can both pass the pre-check. A Postgres exclusion constraint is planned as `db/003`; the repository already maps its error (23P01) to `slot_taken`.
 - **5-second email wait.** A confirm waits up to 5 s for SMTP. A slower send is recorded as failed and left to the reconciler, so if it was eventually delivered the customer can get the confirmation twice. The same can happen if SMTP succeeds but recording `confirmation_sent_at` fails.
@@ -336,15 +363,16 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/postgres npx vitest run t
 - **Google Places.** Needs a billing-enabled key; it has no on-time or cancellation history and review dates are not requested, so those stay null.
 - **OpenStreetMap data.** No ratings, reviews, prices or road distance (§6). Coverage of small Pakistani businesses varies widely by area, and the public endpoints are rate-limited.
 - **Keyword parser.** It is dictionary-based. Spellings it doesn't know are missed, and the fuzzy matcher is deliberately strict to avoid false services.
-- **Unported workflows.** Quality loop, disputes, rescheduling and the provider dashboard still need n8n (503 without it). Their screens still check `response.ok` before reading the body.
+- **No login.** Disputes check that the caller's email matches the booking's, but an email address is not a secret: anyone who knows both the booking id and the email can file a dispute.
+- **Unported workflows.** Quality loop, rescheduling and the provider dashboard still need n8n (503 without it). Their screens still check `response.ok` before reading the body.
 - **Scheduling.** GitHub may delay or skip scheduled runs, and the reconcile workflow only runs once it is on the default branch.
 - **Time limits.** The provider-matching functions have `maxDuration: 60`. A provider search is bounded by Nominatim (5 s) + Overpass (20 s across both instances) by default, plus Google Places (8 s) first when its key is set. If *every* dependency times out at once on the intent path (Gemini 8 s × 2, Nominatim 5 s, Google 8 s, Overpass 20 s, Supabase capacity 8 s × 3 tries) the total can pass 60 s and Vercel stops the function; lower the timeouts if that matters. Other functions (`api/booking.ts`, `api/reconcile.ts`) use the plan's default duration.
 
 ---
 
-## 11. The original n8n design
+## 12. The original n8n design
 
-The JSON in `n8n-workflows/` is kept unchanged as the design record. The first four are the basis of the port; the rest are not ported yet:
+The JSON in `n8n-workflows/` is kept unchanged as the design record. WF1–WF4 and WF6 are ported; the rest are not yet:
 
 | Workflow | Purpose |
 |---|---|
@@ -359,7 +387,7 @@ The demo video ([assets/demo-video.mp4](assets/demo-video.mp4)) shows the origin
 
 ---
 
-## 12. Privacy and security
+## 13. Privacy and security
 
 - **Secrets:** they come only from environment variables (`.env.example` lists names only). The Supabase service-role key is used server-side, in request headers only.
 - **Logs:** one JSON line per event, with secret-looking keys redacted and email addresses masked. The intent text is not logged.
