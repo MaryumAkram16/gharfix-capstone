@@ -227,8 +227,10 @@ Because every OSM provider lacks the same three factors, they don't change the r
 | `NOMINATIM_TIMEOUT_MS` | 5000 |
 | `OVERPASS_URL` | `https://overpass-api.de/api/interpreter` |
 | `OVERPASS_FALLBACK_URL` | `https://overpass.kumi.systems/api/interpreter` (`off` disables) |
-| `OVERPASS_TIMEOUT_MS` | 8000, per instance |
-| `OVERPASS_BUDGET_MS` | 12000, across both instances; the mirror is skipped if less than 2 s is left |
+| `OVERPASS_TIMEOUT_MS` | 15000, per instance |
+| `OVERPASS_BUDGET_MS` | 20000, across both instances; the mirror is skipped if less than 2 s is left |
+
+None of these env vars is required. The functions that run provider matching (`api/proxy.ts`, `api/intent.ts`, `api/provider-match.ts`) set `export const config = { maxDuration: 60 }` (Vercel's in-file config for Node.js `/api` routes), so a search bounded by about 25 s (5 s + 20 s) fits with room for Supabase and Gemini.
 
 Every final failure of the geocoder or the directory is recorded as an incident (§8). The answer is then a 503, unless the demo fallback is on (§7).
 
@@ -328,7 +330,7 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/postgres npx vitest run t
 - **Keyword parser.** It is dictionary-based. Spellings it doesn't know are missed, and the fuzzy matcher is deliberately strict to avoid false services.
 - **Unported workflows.** Quality loop, disputes, rescheduling and the provider dashboard still need n8n (503 without it). Their screens still check `response.ok` before reading the body.
 - **Scheduling.** GitHub may delay or skip scheduled runs, and the reconcile workflow only runs once it is on the default branch.
-- **Time limits.** A provider search is bounded by Nominatim (5 s) + Overpass (12 s across both instances) by default. Worst-case latency when every dependency times out (Supabase 8 s × 3 tries, Gemini 8 s × 2) is still long. Check the Vercel function duration limit for your plan and lower the timeouts if needed.
+- **Time limits.** The provider-matching functions have `maxDuration: 60`. A provider search is bounded by Nominatim (5 s) + Overpass (20 s across both instances) by default. If *every* dependency times out at once on the intent path (Gemini 8 s × 2, Nominatim 5 s, Overpass 20 s, Supabase capacity 8 s × 3 tries) the total can pass 60 s and Vercel stops the function; lower the timeouts if that matters. Other functions (`api/booking.ts`, `api/reconcile.ts`) use the plan's default duration.
 
 ---
 

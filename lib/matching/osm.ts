@@ -19,6 +19,11 @@ export const DEFAULT_NOMINATIM_URL = 'https://nominatim.openstreetmap.org';
 export const DEFAULT_OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 /** Tried when the main instance fails (public mirror listed on the OSM wiki; set OVERPASS_FALLBACK_URL=off to disable). */
 export const DEFAULT_OVERPASS_FALLBACK_URL = 'https://overpass.kumi.systems/api/interpreter';
+
+/** Defaults when OVERPASS_TIMEOUT_MS / OVERPASS_BUDGET_MS / NOMINATIM_TIMEOUT_MS are not set (lib/matching/config.ts). */
+export const DEFAULT_OVERPASS_TIMEOUT_MS = 15000; // per Overpass instance
+export const DEFAULT_OVERPASS_BUDGET_MS = 20000; // across the main instance and the mirror
+export const DEFAULT_NOMINATIM_TIMEOUT_MS = 5000;
 export const DEFAULT_USER_AGENT = 'GharFix/0.1 (portfolio project; +https://github.com/MaryumAkram16/gharfix-capstone)';
 
 export interface OsmOptions {
@@ -77,7 +82,7 @@ function hostOf(url: string): string {
 
 /** Nominatim search, limited to Pakistan. */
 export function createNominatimGeocoder(baseUrl = DEFAULT_NOMINATIM_URL, opts: OsmOptions = {}): Geocoder {
-  const { fetch: fetchImpl = fetch, userAgent = DEFAULT_USER_AGENT, timeoutMs = 5000 } = opts;
+  const { fetch: fetchImpl = fetch, userAgent = DEFAULT_USER_AGENT, timeoutMs = DEFAULT_NOMINATIM_TIMEOUT_MS } = opts;
   const cache = new LruCache<GeocodeResult | null>(200);
   const endpoint = `${baseUrl.replace(/\/+$/, '')}/search`;
 
@@ -122,7 +127,7 @@ function address(tags: Record<string, string>): string {
  * within `budgetMs` overall. Anything else (a bug) is thrown immediately.
  */
 export function createOverpassDirectory(urls: string | string[] = DEFAULT_OVERPASS_URL, opts: OverpassOptions = {}): ProviderDirectory {
-  const { fetch: fetchImpl = fetch, userAgent = DEFAULT_USER_AGENT, timeoutMs = 8000, log, now = () => Date.now() } = opts;
+  const { fetch: fetchImpl = fetch, userAgent = DEFAULT_USER_AGENT, timeoutMs = DEFAULT_OVERPASS_TIMEOUT_MS, log, now = () => Date.now() } = opts;
   const mirrors = (Array.isArray(urls) ? urls : [urls]).filter(Boolean);
   const budgetMs = opts.budgetMs ?? timeoutMs * mirrors.length;
 

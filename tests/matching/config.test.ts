@@ -1,19 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import { OSM_DEFAULTS, osmConfigFromEnv } from '../../lib/matching/config';
-import { DEFAULT_NOMINATIM_URL, DEFAULT_OVERPASS_FALLBACK_URL, DEFAULT_OVERPASS_URL, DEFAULT_USER_AGENT } from '../../lib/matching/osm';
+import { DEFAULT_NOMINATIM_URL, DEFAULT_OVERPASS_FALLBACK_URL, DEFAULT_OVERPASS_URL, DEFAULT_USER_AGENT, MIN_MIRROR_MS } from '../../lib/matching/osm';
 import { memoryLogger } from '../../lib/log';
 
 describe('osmConfigFromEnv', () => {
-  it('defaults: public Nominatim, Overpass plus one mirror, 5 s / 8 s / 12 s', () => {
+  it('defaults: public Nominatim, Overpass plus one mirror, 5 s / 15 s / 20 s, with no env vars set', () => {
     expect(osmConfigFromEnv({})).toEqual({
       nominatimUrl: DEFAULT_NOMINATIM_URL,
       nominatimTimeoutMs: 5000,
       overpassUrls: [DEFAULT_OVERPASS_URL, DEFAULT_OVERPASS_FALLBACK_URL],
-      overpassTimeoutMs: 8000,
-      overpassBudgetMs: 12000,
+      overpassTimeoutMs: 15000,
+      overpassBudgetMs: 20000,
       userAgent: DEFAULT_USER_AGENT,
     });
-    expect(OSM_DEFAULTS).toEqual({ nominatimTimeoutMs: 5000, overpassTimeoutMs: 8000, overpassBudgetMs: 12000 });
+    expect(OSM_DEFAULTS).toEqual({ nominatimTimeoutMs: 5000, overpassTimeoutMs: 15000, overpassBudgetMs: 20000 });
+  });
+
+  it('default budget still leaves the mirror a real attempt after a full main-instance timeout', () => {
+    const { overpassTimeoutMs, overpassBudgetMs } = osmConfigFromEnv({});
+    expect(overpassBudgetMs - overpassTimeoutMs).toBeGreaterThanOrEqual(MIN_MIRROR_MS);
   });
 
   it('reads every override', () => {
