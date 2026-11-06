@@ -439,7 +439,7 @@ export function BookingView({ payload, onBack, onTrack, appLanguage }: BookingVi
       <div className="flex justify-center pt-2 pb-4">
         <p className="text-[9px] text-outline font-bold uppercase tracking-[0.2em] flex items-center gap-2">
           <ShieldCheck className="w-3 h-3" />
-          Secure Booking · KhidmatGaar
+          Secure Booking · GharFix
         </p>
       </div>
     </motion.div>

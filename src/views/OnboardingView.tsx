@@ -170,7 +170,7 @@ export function OnboardingView({ onComplete }: { onComplete: () => void }) {
             <Shield className="w-10 h-10 text-on-primary fill-current" />
           </div>
         </div>
-        <h1 className="text-4xl font-extrabold text-primary tracking-tight">KhidmatGaar</h1>
+        <h1 className="text-4xl font-extrabold text-primary tracking-tight">GharFix</h1>
         <p className="mt-3 text-base text-on-surface-variant font-medium text-center">
           Aapki Zaroorat, Hamare Maahir
         </p>

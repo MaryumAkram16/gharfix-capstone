@@ -12,6 +12,17 @@ import { validateParsedIntent } from './validate.js';
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
 export const DEFAULT_GEMINI_URL = 'https://generativelanguage.googleapis.com';
 
+/**
+ * Gemini 3 models think before answering, at a high level by default, which
+ * on Vercel took longer than the 8 s timeout for this one-line
+ * classification (logs, 2026-11-06). "low" is the level Google suggests for
+ * simple instruction following; "off" sends no thinkingConfig at all (for a
+ * model that rejects the field).
+ */
+export const GEMINI_THINKING_LEVELS = ['minimal', 'low', 'medium', 'high', 'off'] as const;
+export type GeminiThinkingLevel = (typeof GEMINI_THINKING_LEVELS)[number];
+export const DEFAULT_GEMINI_THINKING_LEVEL: GeminiThinkingLevel = 'low';
+
 type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
 export interface GeminiOptions {
@@ -20,6 +31,7 @@ export interface GeminiOptions {
   baseUrl?: string;
   fetch?: FetchLike;
   timeoutMs?: number;
+  thinkingLevel?: GeminiThinkingLevel;
 }
 
 interface GenerateResponse {
@@ -33,7 +45,9 @@ export function createGeminiParser({
   baseUrl = DEFAULT_GEMINI_URL,
   fetch: fetchImpl = fetch,
   timeoutMs = 8000,
+  thinkingLevel = DEFAULT_GEMINI_THINKING_LEVEL,
 }: GeminiOptions): IntentParser {
+  const thinking = thinkingLevel === 'off' ? {} : { thinkingConfig: { thinkingLevel } };
   const url = `${baseUrl.replace(/\/+$/, '')}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
   return {
@@ -47,7 +61,7 @@ export function createGeminiParser({
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: INTENT_PROMPT }] },
             contents: [{ role: 'user', parts: [{ text: `User request: ${message}` }] }],
-            generationConfig: { responseMimeType: 'application/json', responseSchema: INTENT_RESPONSE_SCHEMA, temperature: 0 },
+            generationConfig: { responseMimeType: 'application/json', responseSchema: INTENT_RESPONSE_SCHEMA, temperature: 0, ...thinking },
           }),
           signal: AbortSignal.timeout(timeoutMs),
         });

@@ -29,9 +29,9 @@ export function ChatView({ onServiceTriggered, appLanguage }: ChatViewProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
-      text: appLanguage === 'urdu' ? 'السلام علیکم! میں آپ کا خدمت گار اے آئی ہوں۔ میں آج آپ کی کیسے مدد کر سکتا ہوں؟' : 
-            appLanguage === 'roman_urdu' ? 'Asalam-o-Alaikum! Main aap ka KhidmatGaar AI hoon. Main aaj aap ki kese madad kar sakta hoon?' :
-            'Asalam-o-Alaikum! I am your KhidmatGaar AI. How can I help you today?',
+      text: appLanguage === 'urdu' ? 'السلام علیکم! میں آپ کا گھر فکس اے آئی ہوں۔ میں آج آپ کی کیسے مدد کر سکتا ہوں؟' : 
+            appLanguage === 'roman_urdu' ? 'Asalam-o-Alaikum! Main aap ka GharFix AI hoon. Main aaj aap ki kese madad kar sakta hoon?' :
+            'Asalam-o-Alaikum! I am your GharFix AI. How can I help you today?',
       sender: 'ai',
       timestamp: new Date(),
     },
@@ -298,7 +298,7 @@ export function ChatView({ onServiceTriggered, appLanguage }: ChatViewProps) {
             <Bot className="w-6 h-6 text-primary" />
           </div>
           <div>
-            <h1 className="text-sm font-bold text-on-surface">KhidmatGaar AI</h1>
+            <h1 className="text-sm font-bold text-on-surface">GharFix AI</h1>
             <div className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-secondary animate-pulse"></span>
               <span className="text-[10px] text-outline font-medium">Always Listening</span>

@@ -269,7 +269,7 @@ export function HomeView({ onServiceTriggered, appLanguage }: HomeViewProps) {
         <div className="flex items-center gap-2 px-1">
           <Bot className="w-5 h-5 text-primary" />
           <h2 className="text-sm font-bold text-on-surface flex items-center gap-2">
-            KhidmatGaar Assistant
+            GharFix Assistant
             <span className="text-[10px] bg-secondary/10 text-secondary px-1.5 py-0.5 rounded uppercase tracking-wider font-extrabold animate-pulse">Live</span>
           </h2>
         </div>
