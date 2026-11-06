@@ -90,8 +90,8 @@ export function resilientCapacity(capacity: CapacityReader, ctx: GuardContext): 
 }
 
 /** OpenStreetMap: not retried here (the directory already tries a mirror), but every final failure is an incident. */
-export function resilientDirectory(directory: ProviderDirectory, ctx: GuardContext): ProviderDirectory {
-  return { searchNearby: (search) => guarded(ctx, 'osm.searchNearby', NO_RETRY, () => directory.searchNearby(search)) };
+export function resilientDirectory(directory: ProviderDirectory, ctx: GuardContext, step: 'osm.searchNearby' | 'google.searchText' = 'osm.searchNearby'): ProviderDirectory {
+  return { searchNearby: (search) => guarded(ctx, step, NO_RETRY, () => directory.searchNearby(search)) };
 }
 
 export function resilientGeocoder(geocoder: Geocoder, ctx: GuardContext): Geocoder {

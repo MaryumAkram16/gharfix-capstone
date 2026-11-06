@@ -1,3 +1,4 @@
+import type { Logger } from '../log.js';
 import type { GeoPoint, Place } from './types.js';
 
 // The swappable boundary that replaced the Google Maps APIs. lib/matching/osm.ts
@@ -35,4 +36,22 @@ export class MapsUnavailableError extends Error {
   constructor(readonly service: 'geocoder' | 'directory', message: string, readonly httpStatus: number | null = null, readonly timedOut = false) {
     super(message);
   }
+}
+
+/**
+ * Ask `primary`; if it throws, ask `secondary` instead. Zero results from
+ * `primary` are an answer and are returned as they are. Wrap `primary` with
+ * lib/resilience first, so its failure is recorded before it is covered here.
+ */
+export function withDirectoryFallback(primary: ProviderDirectory, secondary: ProviderDirectory, log?: Logger): ProviderDirectory {
+  return {
+    async searchNearby(search) {
+      try {
+        return await primary.searchNearby(search);
+      } catch (err) {
+        log?.warn('match.directory_fallback_used', { services: search.services, error: err });
+        return secondary.searchNearby(search);
+      }
+    },
+  };
 }

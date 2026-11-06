@@ -35,6 +35,7 @@ function ProviderCard({ provider, isSelectedSlot, onSelectSlot, onBook, isTopMat
       providerIdLabel: "Provider ID",
       noRatings: "No ratings or reviews yet (OpenStreetMap listing)", straightLine: "straight line",
       demoNoRatings: "Demo data: sample provider, not a real business",
+      googleNoRatings: "No Google ratings yet",
     },
     urdu: {
       reviews: "تبصرے", score: "اسکور", startsFrom: "شروع سے",
@@ -43,6 +44,7 @@ function ProviderCard({ provider, isSelectedSlot, onSelectSlot, onBook, isTopMat
       providerIdLabel: "پرووائیڈر آئی ڈی",
       noRatings: "ابھی کوئی ریٹنگ یا تبصرہ نہیں (اوپن اسٹریٹ میپ)", straightLine: "سیدھی لکیر",
       demoNoRatings: "ڈیمو ڈیٹا: نمونہ فراہم کنندہ، حقیقی کاروبار نہیں",
+      googleNoRatings: "ابھی گوگل پر کوئی ریٹنگ نہیں",
     },
     roman_urdu: {
       reviews: "reviews", score: "Score", startsFrom: "Starts From",
@@ -51,6 +53,7 @@ function ProviderCard({ provider, isSelectedSlot, onSelectSlot, onBook, isTopMat
       providerIdLabel: "Provider ID",
       noRatings: "Abhi koi rating ya review nahi (OpenStreetMap listing)", straightLine: "seedhi line",
       demoNoRatings: "Demo data: sample provider, asli business nahi",
+      googleNoRatings: "Abhi Google par koi rating nahi",
     },
   }[appLanguage];
 
@@ -108,10 +111,10 @@ function ProviderCard({ provider, isSelectedSlot, onSelectSlot, onBook, isTopMat
                 )}
               </div>
             ) : (
-              // OpenStreetMap has no ratings or reviews: say so instead of showing 0 stars.
+              // No rating (OpenStreetMap never has one, Google sometimes): say so instead of showing 0 stars.
               <div className="flex items-center gap-1">
                 <Star className="w-3.5 h-3.5 text-outline" />
-                <span className="text-[10px] text-on-surface-variant font-medium">{provider.source === 'demo_seed' ? translations.demoNoRatings : translations.noRatings}</span>
+                <span className="text-[10px] text-on-surface-variant font-medium">{provider.source === 'demo_seed' ? translations.demoNoRatings : provider.source === 'google_places' ? translations.googleNoRatings : translations.noRatings}</span>
               </div>
             )}
             <p className="text-[10px] text-outline mt-0.5 font-medium">

@@ -3,15 +3,15 @@ import { fail, internalError, ok, validationError, type HttpResult } from '../ht
 import type { Logger } from '../log.js';
 import { MapsUnavailableError, type CapacityReader, type GeocodeResult, type Geocoder, type ProviderDirectory } from './directory.js';
 import { pakistanHour, priceServices } from './pricing.js';
-import { DEMO_DATA_GAPS, OSM_DATA_GAPS, toProvider } from './providers.js';
+import { DEMO_DATA_GAPS, GOOGLE_DATA_GAPS, OSM_DATA_GAPS, toProvider } from './providers.js';
 import { scoreServices } from './scoring.js';
 import type { MatchRequest, ProviderSource } from './types.js';
 
 // khadmat-provider-match (WF2 + inline WF3) without n8n or Google Maps.
 //   normalise services -> geocode -> nearby search -> today's capacity
 //   -> provider schema -> score -> price
-// Response shapes are WF3's. Additive: `data_source` ("openstreetmap" or
-// "demo_seed") says where the providers came from; `data_notes` says what
+// Response shapes are WF3's. Additive: `data_source` ("google_places",
+// "openstreetmap" or "demo_seed") says where the providers came from; `data_notes` says what
 // that source cannot provide.
 
 export interface MatchDeps {
@@ -29,6 +29,7 @@ const MULTI = 'Multi-Service Package';
 export const NO_PROVIDERS_TEXT = 'Sorry, no providers found in your area for this service';
 
 export const OSM_NOTE = 'OpenStreetMap lists businesses but has no ratings, reviews, prices or reliability history. Those fields are null, and scores count them as 0.';
+export const GOOGLE_NOTE = 'Google Places supplies ratings, review counts and a price level where it has them. It has no on-time or cancellation history, so those fields are null and scores count them as 0. Distance is straight-line.';
 export const DEMO_NOTE = 'DEMO DATA: OpenStreetMap had no providers near this location, so these are fictional sample providers from db/seed/demo_providers.json. They are not real businesses.';
 export const DEMO_NOTE_UNAVAILABLE = 'DEMO DATA: OpenStreetMap could not be reached (timed out or failed), so these are fictional sample providers from db/seed/demo_providers.json. They are not real businesses.';
 
@@ -127,8 +128,8 @@ export async function handleProviderMatch(body: unknown, deps: MatchDeps): Promi
     const matches = scoreServices(services, providers, request, now);
     const priced = priceServices(matches, { job_complexity: request.job_complexity, location }, pakistanHour(now));
 
-    // A search returns one source only: demo places appear only when OpenStreetMap returned none.
-    const source: ProviderSource = places.some((p) => p.source === 'demo_seed') ? 'demo_seed' : 'openstreetmap';
+    // A search returns one source only: Google, else OpenStreetMap, else demo places.
+    const source: ProviderSource = places.some((p) => p.source === 'demo_seed') ? 'demo_seed' : places.some((p) => p.source === 'google_places') ? 'google_places' : 'openstreetmap';
     const demoReason = source === 'demo_seed' ? (places[0].demoReason ?? 'osm_empty') : undefined;
     log.info('match.done', { places: places.length, data_source: source, geocoder: geocoded.source, capacity_checked: capacityChecked });
     return ok({
@@ -138,8 +139,8 @@ export async function handleProviderMatch(body: unknown, deps: MatchDeps): Promi
         geocoder: geocoded.source,
         distance: 'straight_line',
         capacity_checked: capacityChecked,
-        not_available: source === 'demo_seed' ? [...DEMO_DATA_GAPS] : [...OSM_DATA_GAPS],
-        note: source === 'demo_seed' ? (demoReason === 'osm_unavailable' ? DEMO_NOTE_UNAVAILABLE : DEMO_NOTE) : OSM_NOTE,
+        not_available: source === 'demo_seed' ? [...DEMO_DATA_GAPS] : source === 'google_places' ? [...GOOGLE_DATA_GAPS] : [...OSM_DATA_GAPS],
+        note: source === 'demo_seed' ? (demoReason === 'osm_unavailable' ? DEMO_NOTE_UNAVAILABLE : DEMO_NOTE) : source === 'google_places' ? GOOGLE_NOTE : OSM_NOTE,
         ...(demoReason ? { demo_reason: demoReason } : {}),
       },
     });

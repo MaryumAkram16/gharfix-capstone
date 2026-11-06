@@ -35,12 +35,25 @@ export interface Place {
   source: ProviderSource;
   /** Demo places only: why the demo directory was used. */
   demoReason?: DemoReason;
+  /** Google Places only: facts Google returned (null = Google has none). */
+  google?: GooglePlaceFacts;
+}
+
+export interface GooglePlaceFacts {
+  rating: number | null;
+  reviewCount: number | null;
+  /** e.g. PRICE_LEVEL_MODERATE */
+  priceLevel: string | null;
+  /** e.g. OPERATIONAL */
+  businessStatus: string | null;
+  openNow: boolean | null;
+  mapsUrl: string;
 }
 
 /** osm_empty: OpenStreetMap answered with no providers. osm_unavailable: it timed out or failed. */
 export type DemoReason = 'osm_empty' | 'osm_unavailable';
 
-export type ProviderSource = 'openstreetmap' | 'demo_seed';
+export type ProviderSource = 'google_places' | 'openstreetmap' | 'demo_seed';
 
 /**
  * The provider schema WF2 produced and the frontend reads. Values the data
@@ -57,7 +70,8 @@ export interface Provider {
   address: string;
   base_rate_pkr: number;
   /** "gharfix_default": GharFix's standard rate, not a price the provider published. */
-  base_rate_source: 'gharfix_default';
+  /** "google_price_level": from Google's price level (WF2's mapping); "gharfix_default": GharFix's standard rate. */
+  base_rate_source: 'gharfix_default' | 'google_price_level';
   rating: number | null;
   review_count: number | null;
   last_review_date: string | null;
