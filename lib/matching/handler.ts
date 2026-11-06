@@ -65,7 +65,15 @@ function str(v: unknown): string | null {
 /** WF2 "Multi-Service Handler": real service names only, never the "Multi-Service Package" label. */
 export function normaliseServices(intent: Record<string, unknown>): string[] {
   const raw = Array.isArray(intent.services) ? intent.services : [intent.primary_service ?? intent.service_type];
-  const services = [...new Set(raw.map(str).filter((s): s is string => s !== null && s !== MULTI && s.length <= 80))];
+  // One entry per service whatever its case ("Plumber" and "plumber" are one search); the first spelling is kept.
+  const seen = new Set<string>();
+  const services = raw.map(str).filter((s): s is string => {
+    if (s === null || s === MULTI || s.length > 80) return false;
+    const key = s.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
   const primary = str(intent.primary_service);
   if (services.length === 0 && primary && primary !== MULTI) services.push(primary);
   return services.slice(0, MAX_SERVICES);
