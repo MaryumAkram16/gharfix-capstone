@@ -18,12 +18,12 @@ describe('Vercel maxDuration', () => {
     expect((mod as { config?: unknown }).config).toEqual({ maxDuration: 60 });
   });
 
-  it('is set only on the functions that run provider matching (the others keep the platform default)', () => {
+  it('is set only on the functions that run provider matching, and the nightly score refresh (the others keep the platform default)', () => {
     const dir = resolve(__dirname, '../../api');
     const withConfig = readdirSync(dir)
       .filter((f) => f.endsWith('.ts'))
       .filter((f) => /export const config = \{ maxDuration: 60 \};/.test(readFileSync(resolve(dir, f), 'utf8')));
-    expect(withConfig.sort()).toEqual(['intent.ts', 'provider-match.ts', 'proxy.ts']);
+    expect(withConfig.sort()).toEqual(['intent.ts', 'provider-match.ts', 'provider-scores.ts', 'proxy.ts']);
   });
 
   it('a provider search with default timeouts ends well inside 60 s', () => {

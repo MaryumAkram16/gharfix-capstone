@@ -161,10 +161,11 @@ function DisputeSheet({ booking, onClose, onSuccess }: { booking: SavedBooking; 
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ endpoint: 'khadmat-dispute', ...payload }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const text = await res.text();
       let json: any = {};
-      try { if (text) { let p = JSON.parse(text); json = Array.isArray(p) && p.length === 1 ? p[0] : p; } } catch { json = { status: 'dispute_resolved' }; }
+      try { if (text) { let p = JSON.parse(text); json = Array.isArray(p) && p.length === 1 ? p[0] : p; } } catch { json = res.ok ? { status: 'dispute_resolved' } : {}; }
+      // 400/403/404/409/503 carry a message for the customer (wrong account, booking not found, try again).
+      if (!res.ok) { setError(typeof json.message === 'string' ? json.message : 'Network error. Please try again.'); return; }
       setResult(json);
       updateBookingInStorage(booking.booking_id, { dispute_result: json });
       onSuccess();

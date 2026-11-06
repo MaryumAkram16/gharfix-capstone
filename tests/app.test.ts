@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../lib/app';
+import { ENDPOINTS } from '../lib/http/proxy';
 import type { LogRecord } from '../lib/log';
 
 // The whole server path with only HTTP faked: createApp -> proxy -> booking
@@ -102,17 +103,12 @@ describe('createApp', () => {
     expect(logs.find((r) => r.event === 'incident.recorded')).toMatchObject({ workflow: 'khadmat-booking', step: 'config', error_class: 'Error', auto_fixed: false });
   });
 
-  it('only forwards to n8n when N8N_WEBHOOK_BASE_URL is set', async () => {
+  it('every endpoint runs in-process now: nothing is forwarded to n8n even when N8N_WEBHOOK_BASE_URL is set', async () => {
     const seen: string[] = [];
-    const fetchImpl = async (input: string) => { seen.push(input); return Response.json({ status: 'success' }); };
-
-    const withoutN8n = createApp({ env, fetch: fetchImpl, logSink: () => {} });
-    expect((await withoutN8n.proxy({ endpoint: 'khadmat-dispute' }, { requestId: null })).status).toBe(503);
-    expect(seen).toEqual([]);
-
+    const fetchImpl = async (input: string) => { seen.push(input); return Response.json([]); };
     const withN8n = createApp({ env: { ...env, N8N_WEBHOOK_BASE_URL: 'https://n8n.test/webhook' }, fetch: fetchImpl, logSink: () => {} });
-    expect((await withN8n.proxy({ endpoint: 'khadmat-dispute' }, { requestId: null })).status).toBe(200);
-    expect(seen).toEqual(['https://n8n.test/webhook/khadmat-dispute']);
+    for (const endpoint of ENDPOINTS) await withN8n.proxy({ endpoint }, { requestId: null });
+    expect(seen.filter((u) => u.startsWith('https://n8n.test'))).toEqual([]);
   });
 
   it('uses the console email fallback when GMAIL_* is not set, and the booking still confirms', async () => {

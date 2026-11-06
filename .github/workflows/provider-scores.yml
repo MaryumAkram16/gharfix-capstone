@@ -1,0 +1,48 @@
+# WF8b: nightly provider_scores refresh (n8n ran it at 02:00).
+# 20:47 UTC is 01:47 in Pakistan; off the hour, since GitHub delays
+# scheduled runs that start on the hour.
+#
+# Repository secrets (Settings -> Secrets and variables -> Actions):
+#   PROVIDER_SCORES_URL  e.g. https://<your-app>.vercel.app/api/provider-scores
+#   CRON_SECRET          the same value as CRON_SECRET in Vercel (shared with reconcile)
+
+name: Refresh provider scores
+
+on:
+  schedule:
+    - cron: '47 20 * * *'
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: provider-scores
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Call /api/provider-scores
+        env:
+          PROVIDER_SCORES_URL: ${{ secrets.PROVIDER_SCORES_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PROVIDER_SCORES_URL}" ] || [ -z "${CRON_SECRET}" ]; then
+            echo "::error::Set the PROVIDER_SCORES_URL and CRON_SECRET repository secrets."
+            exit 1
+          fi
+          status=$(curl --silent --show-error --max-time 90 \
+            --output response.json --write-out '%{http_code}' \
+            --request POST \
+            --header "Authorization: Bearer ${CRON_SECRET}" \
+            "${PROVIDER_SCORES_URL}")
+          echo "HTTP ${status}"
+          cat response.json
+          echo
+          if [ "${status}" != "200" ]; then
+            echo "::error::Provider score refresh answered HTTP ${status}"
+            exit 1
+          fi

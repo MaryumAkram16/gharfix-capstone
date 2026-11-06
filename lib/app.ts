@@ -2,6 +2,8 @@ import { createBookingRoute, type Env, type FetchLike } from './booking/deps.js'
 import type { EmailSender } from './email/types.js';
 import type { HttpResult } from './http/errors.js';
 import { createN8nForwarder, routeProxy, type LocalHandler, type RouteMeta } from './http/proxy.js';
+import { createDashboardRoute, createScoreRefresher, type ScoreRefresher } from './dashboard/deps.js';
+import { createDisputeRoute, createQualityRoute, createRescheduleRoute } from './dispute/deps.js';
 import { createIntentRoute } from './intent/deps.js';
 import { emailSenderFromEnv } from './email/index.js';
 import { createLogger, type LogSink } from './log.js';
@@ -29,6 +31,8 @@ export interface App {
   proxy: (body: unknown, meta: RouteMeta) => Promise<HttpResult<unknown>>;
   /** api/reconcile.ts: re-send unsent confirmations. Not reachable through /api/proxy. */
   reconcile: ReconcileRunner;
+  /** api/provider-scores.ts: the nightly provider_scores refresh (WF8b). Not reachable through /api/proxy. */
+  refreshScores: ScoreRefresher;
 }
 
 export function createApp({ env = process.env, fetch, email, logSink, reconcileDeliverable }: AppOptions = {}): App {
@@ -42,13 +46,20 @@ export function createApp({ env = process.env, fetch, email, logSink, reconcileD
   const n8nBase = env.N8N_WEBHOOK_BASE_URL?.trim();
   const forward = n8nBase ? createN8nForwarder({ baseUrl: n8nBase, fetch, log: log.child({ fn: 'proxy' }) }) : null;
 
-  const local = { 'khadmat-booking': booking, 'khadmat-intent': intent, 'khadmat-provider-match': providerMatch };
+  const dispute = createDisputeRoute({ env, fetch, email: mailer, recorder, log: log.child({ fn: 'khadmat-dispute' }) });
+  const quality = createQualityRoute({ env, fetch, email: mailer, recorder, log: log.child({ fn: 'khadmat-quality' }) });
+  const dashboard = createDashboardRoute({ env, fetch, recorder, log: log.child({ fn: 'khadmat-provider-dashboard' }) });
+  const refreshScores = createScoreRefresher({ env, fetch, recorder, log: log.child({ fn: 'provider-scores' }) });
+  const reschedule = createRescheduleRoute({ env, fetch, email: mailer, recorder, log: log.child({ fn: 'khadmat-reschedule' }) }, booking);
+
+  const local = { 'khadmat-booking': booking, 'khadmat-intent': intent, 'khadmat-provider-match': providerMatch, 'khadmat-dispute': dispute, 'khadmat-quality': quality, 'khadmat-reschedule': reschedule, 'khadmat-provider-dashboard': dashboard };
   const reconcile = createReconcileRunner({ env, fetch, email: mailer, recorder, deliverable: reconcileDeliverable, log: log.child({ fn: 'reconcile' }) });
   return {
     booking,
     intent,
     providerMatch,
     reconcile,
+    refreshScores,
     proxy: (body, meta) => routeProxy(body, { local, forward, log }, meta),
   };
 }
