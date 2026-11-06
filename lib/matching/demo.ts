@@ -104,6 +104,14 @@ export function createDemoDirectory(load: () => Promise<DemoDataset> = loadDemoD
 }
 
 /**
+ * Radius for the demo fallback. The demo has a handful of areas per city, so
+ * the normal 5 km search missed most of Lahore (Gulshan-e-Ravi is 8.5 km from
+ * the nearest demo area). 25 km covers each whole city; distances shown and
+ * scored stay the real straight-line ones. Karachi etc. still find nothing.
+ */
+export const DEMO_FALLBACK_RADIUS_M = 25_000;
+
+/**
  * The real directory first. The demo directory is asked when the real one
  * answers with zero providers, or fails (timeout, outage, error). Wrap the
  * real directory with lib/resilience first, so its failure is recorded as an
@@ -125,7 +133,7 @@ export function withDemoFallback(primary: ProviderDirectory, demo: ProviderDirec
         reason = 'osm_unavailable';
         failure = err;
       }
-      const fallback = await demo.searchNearby(search);
+      const fallback = await demo.searchNearby({ ...search, radiusM: Math.max(search.radiusM, DEMO_FALLBACK_RADIUS_M) });
       log?.warn('match.demo_fallback_used', { services: search.services, reason, demo_results: fallback.length, error: failure ?? undefined });
       if (failure !== null && fallback.length === 0) throw failure;
       return fallback.map((p) => ({ ...p, demoReason: reason }));

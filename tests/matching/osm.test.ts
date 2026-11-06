@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { memoryLogger } from '../../lib/log';
 import { MapsUnavailableError } from '../../lib/matching/directory';
 import { createNominatimGeocoder, createOverpassDirectory, DEFAULT_USER_AGENT } from '../../lib/matching/osm';
-import { elementMatches, overpassQuery, ruleFor, SERVICE_RULES } from '../../lib/matching/osmServices';
+import { BUSINESS_KEYS, elementMatches, overpassQuery, ruleFor, SERVICE_RULES } from '../../lib/matching/osmServices';
 
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
@@ -92,17 +92,31 @@ describe('elementMatches', () => {
 });
 
 describe('overpassQuery', () => {
-  it('builds one around-filter per tag and name pattern, de-duplicated', () => {
+  it('builds tag selectors plus ONE combined name regex per business key, nodes and ways only', () => {
     const q = overpassQuery([ruleFor('plumber')!, ruleFor('geyser repair')!], 33.6557, 73.0138, 5000, 10);
+    const around = '(around:5000,33.655700,73.013800)';
     expect(q).toBe([
       '[out:json][timeout:10];',
       '(',
-      '  nwr["craft"="plumber"](around:5000,33.655700,73.013800);',
-      '  nwr["name"~"plumb",i](around:5000,33.655700,73.013800);',
-      '  nwr["name"~"sanitary",i](around:5000,33.655700,73.013800);',
+      `  nw["craft"="plumber"]${around};`,
+      ...BUSINESS_KEYS.map((k) => `  nw["${k}"]["name"~"(plumb)|(sanitary)",i]${around};`),
       ');',
       'out center tags 200;',
     ].join('\n'));
+    // No bare name scans over every named object, and no relations.
+    expect(q).not.toMatch(/\bnwr\[/);
+    expect(q).not.toMatch(/^ {2}nw\["name"~/m);
+  });
+
+  it('combines name patterns from several services into one regex that still matches each', () => {
+    const rules = [ruleFor('AC repair')!, ruleFor('plumber')!];
+    const q = overpassQuery(rules, 31.5, 74.3, 5000, 10);
+    const regexLines = q.split('\n').filter((l) => l.includes('["name"~'));
+    expect(regexLines).toHaveLength(BUSINESS_KEYS.length);
+    const combined = /"name"~"(.*)",i\]/.exec(regexLines[0])![1].replace(/\\\\/g, '\\');
+    const js = new RegExp(combined, 'i');
+    for (const name of ['Ali AC Services', 'A.C. Wala', 'Shah Air Conditioning', 'City Plumbers', 'Lahore Sanitary Store']) expect(js.test(name)).toBe(true);
+    for (const name of ['Pacific Traders', 'Bakery']) expect(js.test(name)).toBe(false);
   });
 
   it('refuses non-numeric coordinates', () => {
@@ -129,8 +143,9 @@ describe('Overpass directory', () => {
     expect(f.calls[0].init.method).toBe('POST');
     expect(f.calls[0].init.headers).toMatchObject({ 'Content-Type': 'application/x-www-form-urlencoded' });
     const data = new URLSearchParams(f.calls[0].init.body as string).get('data')!;
-    expect(data).toContain('nwr["craft"="plumber"](around:5000,33.655700,73.013800);');
-    expect(data).toContain('nwr["craft"="electrician"]');
+    expect(data).toContain('nw["craft"="plumber"](around:5000,33.655700,73.013800);');
+    expect(data).toContain('nw["craft"="electrician"]');
+    expect(data).toContain('nw["shop"]["name"~');
 
     expect(places).toEqual([
       {

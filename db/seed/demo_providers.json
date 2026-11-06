@@ -286,6 +286,166 @@
         "AC repair"
       ],
       "address": "Demo listing, G-13, Islamabad"
+    },
+    {
+      "id": "demo:lhr-gulshanravi-home",
+      "name": "[DEMO] Gulshan-e-Ravi Home Repairs",
+      "city": "Lahore",
+      "area": "Gulshan-e-Ravi",
+      "lat": 31.5557,
+      "lng": 74.2723,
+      "services": [
+        "plumber",
+        "electrician",
+        "AC repair",
+        "carpenter",
+        "painter"
+      ],
+      "address": "Demo listing, Gulshan-e-Ravi, Lahore"
+    },
+    {
+      "id": "demo:lhr-gulshanravi-appliance",
+      "name": "[DEMO] Gulshan-e-Ravi Appliance & Pest Care",
+      "city": "Lahore",
+      "area": "Gulshan-e-Ravi",
+      "lat": 31.5518,
+      "lng": 74.2683,
+      "services": [
+        "fridge repair",
+        "washing machine repair",
+        "phone repair",
+        "pest control",
+        "deep cleaning"
+      ],
+      "address": "Demo listing, Gulshan-e-Ravi, Lahore"
+    },
+    {
+      "id": "demo:lhr-iqbaltown-home",
+      "name": "[DEMO] Allama Iqbal Town Home Repairs",
+      "city": "Lahore",
+      "area": "Allama Iqbal Town",
+      "lat": 31.5125,
+      "lng": 74.2869,
+      "services": [
+        "plumber",
+        "electrician",
+        "AC repair",
+        "carpenter",
+        "painter"
+      ],
+      "address": "Demo listing, Allama Iqbal Town, Lahore"
+    },
+    {
+      "id": "demo:lhr-iqbaltown-appliance",
+      "name": "[DEMO] Allama Iqbal Town Appliance & Pest Care",
+      "city": "Lahore",
+      "area": "Allama Iqbal Town",
+      "lat": 31.5086,
+      "lng": 74.2829,
+      "services": [
+        "fridge repair",
+        "washing machine repair",
+        "phone repair",
+        "pest control",
+        "deep cleaning"
+      ],
+      "address": "Demo listing, Allama Iqbal Town, Lahore"
+    },
+    {
+      "id": "demo:lhr-bahria-home",
+      "name": "[DEMO] Bahria Town Home Repairs",
+      "city": "Lahore",
+      "area": "Bahria Town",
+      "lat": 31.3697,
+      "lng": 74.184,
+      "services": [
+        "plumber",
+        "electrician",
+        "AC repair",
+        "carpenter",
+        "painter"
+      ],
+      "address": "Demo listing, Bahria Town, Lahore"
+    },
+    {
+      "id": "demo:lhr-bahria-appliance",
+      "name": "[DEMO] Bahria Town Appliance & Pest Care",
+      "city": "Lahore",
+      "area": "Bahria Town",
+      "lat": 31.3658,
+      "lng": 74.18,
+      "services": [
+        "fridge repair",
+        "washing machine repair",
+        "phone repair",
+        "pest control",
+        "deep cleaning"
+      ],
+      "address": "Demo listing, Bahria Town, Lahore"
+    },
+    {
+      "id": "demo:isb-g9-home",
+      "name": "[DEMO] G-9 Home Repairs",
+      "city": "Islamabad",
+      "area": "G-9",
+      "lat": 33.6959,
+      "lng": 73.0319,
+      "services": [
+        "plumber",
+        "electrician",
+        "AC repair",
+        "carpenter",
+        "painter"
+      ],
+      "address": "Demo listing, G-9, Islamabad"
+    },
+    {
+      "id": "demo:isb-g9-appliance",
+      "name": "[DEMO] G-9 Appliance & Pest Care",
+      "city": "Islamabad",
+      "area": "G-9",
+      "lat": 33.692,
+      "lng": 73.0279,
+      "services": [
+        "fridge repair",
+        "washing machine repair",
+        "phone repair",
+        "pest control",
+        "deep cleaning"
+      ],
+      "address": "Demo listing, G-9, Islamabad"
+    },
+    {
+      "id": "demo:isb-g11-home",
+      "name": "[DEMO] G-11 Home Repairs",
+      "city": "Islamabad",
+      "area": "G-11",
+      "lat": 33.6865,
+      "lng": 73.0083,
+      "services": [
+        "plumber",
+        "electrician",
+        "AC repair",
+        "carpenter",
+        "painter"
+      ],
+      "address": "Demo listing, G-11, Islamabad"
+    },
+    {
+      "id": "demo:isb-g11-appliance",
+      "name": "[DEMO] G-11 Appliance & Pest Care",
+      "city": "Islamabad",
+      "area": "G-11",
+      "lat": 33.6826,
+      "lng": 73.0043,
+      "services": [
+        "fridge repair",
+        "washing machine repair",
+        "phone repair",
+        "pest control",
+        "deep cleaning"
+      ],
+      "address": "Demo listing, G-11, Islamabad"
     }
   ]
 }

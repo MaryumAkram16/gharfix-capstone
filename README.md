@@ -186,6 +186,8 @@ Not tested live: no Gemini key was available while building this, so the Gemini 
 **Pipeline.**
 1. Geocode the location (Nominatim, Pakistan only, cached).
 2. Search 5 km around it (Overpass), using a service → OSM-tag/name table, e.g. `craft=plumber` or names containing "plumb". If the main Overpass instance times out or fails, a second instance (mirror) is tried before giving up.
+
+   The query is kept cheap for the public servers: nodes and ways only (no relations); name patterns combined into one regex; and that regex applied only to objects tagged as a business (`shop`, `craft`, `office`, `amenity`, `healthcare`), so Overpass narrows by its tag index before reading names. A business with a matching name but none of those tags is not found.
 3. Read today's real booking counts from Supabase.
 4. Map each place to WF2's provider schema.
 5. Score and price.
@@ -240,7 +242,7 @@ Not tested live: this environment's network policy blocks `nominatim.openstreetm
 
 ## 7. Demo-data fallback
 
-Off by default. With `USE_DEMO_PROVIDERS=1` (exactly `1`), matching falls back to `db/seed/demo_providers.json` (18 fictional providers around 8 areas of Lahore and Islamabad) when OpenStreetMap returns **zero** providers, or when it **fails**: both Overpass instances timed out or errored.
+Off by default. With `USE_DEMO_PROVIDERS=1` (exactly `1`), matching falls back to `db/seed/demo_providers.json` (28 fictional providers around 13 areas of Lahore and Islamabad; as a fallback it searches each city within 25 km, and shows the real straight-line distance) when OpenStreetMap returns **zero** providers, or when it **fails**: both Overpass instances timed out or errored.
 
 - **Clearly labelled data:**
   - The file starts with a "DEMO DATA" notice.

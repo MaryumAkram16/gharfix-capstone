@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createDemoDirectory, loadDemoDataset, validateDemoDataset, withDemoFallback, type DemoDataset } from '../../lib/matching/demo';
+import { createDemoDirectory, DEMO_FALLBACK_RADIUS_M, loadDemoDataset, validateDemoDataset, withDemoFallback, type DemoDataset } from '../../lib/matching/demo';
+import { haversineKm } from '../../lib/matching/providers';
 import { MapsUnavailableError, type NearbySearch, type ProviderDirectory } from '../../lib/matching/directory';
 import { DEMO_NOTE, handleProviderMatch, type MatchDeps } from '../../lib/matching/handler';
 import { ruleFor, SERVICE_RULES } from '../../lib/matching/osmServices';
@@ -152,5 +153,38 @@ describe('khadmat-provider-match with demo places', () => {
     const top = body.services[0].provider;
     expect(top).toMatchObject({ source: 'demo_seed', id: 'demo:isb-g13-home', name: '[DEMO] G-13 Home Repairs', rating: null, review_count: null, google_maps_url: '', osm_url: '' });
     expect(top.data_gaps[0]).toMatch(/^not a real business/);
+  });
+});
+
+describe('demo coverage (Vercel logs, 2026-11-06: Gulshan-e-Ravi got a 503)', () => {
+  const GULSHAN_E_RAVI = { lat: 31.5536, lng: 74.2706 };
+  const FAR_NORTH_LAHORE = { lat: 31.62, lng: 74.32 }; // ~8 km from the nearest demo area
+  const down = () => ({ async searchNearby(): Promise<Place[]> { throw new MapsUnavailableError('directory', 'directory timed out (2 Overpass instance(s) tried)', null, true); } });
+
+  it('the seed covers 13 areas in Lahore and Islamabad, including the ones added for the fallback', async () => {
+    const data = await loadDemoDataset();
+    expect(data.providers).toHaveLength(28);
+    const areas = new Set(data.providers.map((p) => `${p.city}/${p.area}`));
+    expect(areas.size).toBe(13);
+    for (const a of ['Lahore/Gulshan-e-Ravi', 'Lahore/Allama Iqbal Town', 'Lahore/Bahria Town', 'Islamabad/G-9', 'Islamabad/G-11']) expect(areas).toContain(a);
+  });
+
+  it('Gulshan-e-Ravi now gets demo providers when OSM is down', async () => {
+    const places = await withDemoFallback(down(), createDemoDirectory()).searchNearby(search({ center: GULSHAN_E_RAVI }));
+    expect(places.length).toBeGreaterThan(0);
+    expect(places[0]).toMatchObject({ id: 'demo:lhr-gulshanravi-home', source: 'demo_seed', demoReason: 'osm_unavailable' });
+  });
+
+  it('the fallback searches city-wide (25 km), so areas between demo hubs are covered too', async () => {
+    expect(DEMO_FALLBACK_RADIUS_M).toBe(25_000);
+    expect(await createDemoDirectory().searchNearby(search({ center: FAR_NORTH_LAHORE }))).toEqual([]); // plain 5 km search
+    const places = await withDemoFallback(down(), createDemoDirectory()).searchNearby(search({ center: FAR_NORTH_LAHORE }));
+    expect(places.length).toBeGreaterThan(0);
+    expect(places.every((p) => haversineKm(FAR_NORTH_LAHORE, p) <= 25)).toBe(true);
+  });
+
+  it('still finds nothing in Karachi, so an outage there stays an error', async () => {
+    const err = await withDemoFallback(down(), createDemoDirectory()).searchNearby(search({ center: CLIFTON_KARACHI })).catch((e) => e);
+    expect(err).toBeInstanceOf(MapsUnavailableError);
   });
 });

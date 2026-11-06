@@ -98,14 +98,33 @@ function quote(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
-/** Overpass QL for named-or-tagged matches within `radiusM` of a point. Coordinates are numbers, everything else comes from the rule table. */
+/**
+ * Keys a business carries in OSM. Name matching is limited to objects with
+ * one of them, so Overpass narrows by its tag index before running the
+ * case-insensitive name regex (a bare nwr["name"~...,i] scans every named
+ * object in the area, which timed out on the public servers).
+ */
+export const BUSINESS_KEYS = ['shop', 'craft', 'office', 'amenity', 'healthcare'] as const;
+
+/**
+ * Overpass QL for tagged-or-named businesses within `radiusM` of a point.
+ *   - nodes and ways only (businesses are not relations; relations are costly)
+ *   - each tag selector once, e.g. nw["craft"="plumber"]
+ *   - all name patterns as ONE regex, applied per business key
+ * Coordinates are numbers; everything else comes from the rule table.
+ */
 export function overpassQuery(rules: ServiceRule[], lat: number, lng: number, radiusM: number, timeoutS: number): string {
   if (![lat, lng, radiusM, timeoutS].every(Number.isFinite)) throw new Error('overpassQuery: non-numeric coordinates');
   const around = `(around:${Math.round(radiusM)},${lat.toFixed(6)},${lng.toFixed(6)})`;
   const lines = new Set<string>();
   for (const rule of rules) {
-    for (const [k, v] of rule.tags) lines.add(`  nwr[${quote(k)}=${quote(v)}]${around};`);
-    for (const pattern of rule.names) lines.add(`  nwr["name"~${quote(pattern)},i]${around};`);
+    for (const [k, v] of rule.tags) lines.add(`  nw[${quote(k)}=${quote(v)}]${around};`);
+  }
+  const names = [...new Set(rules.flatMap((r) => r.names))];
+  if (names.length) {
+    // (a)|(b): valid alternation in both POSIX ERE (Overpass) and JavaScript.
+    const combined = quote(names.map((n) => `(${n})`).join('|'));
+    for (const key of BUSINESS_KEYS) lines.add(`  nw[${quote(key)}]["name"~${combined},i]${around};`);
   }
   return `[out:json][timeout:${Math.round(timeoutS)}];\n(\n${[...lines].join('\n')}\n);\nout center tags 200;`;
 }
