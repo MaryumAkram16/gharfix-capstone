@@ -64,7 +64,7 @@ export function ProviderLoginView({ onLoginSuccess }: ProviderLoginViewProps) {
           </div>
         </div>
         <h1 className="text-3xl font-extrabold text-primary tracking-tight">Welcome Back</h1>
-        <p className="mt-3 text-sm text-on-surface-variant font-medium text-center">Choose your role to continue to KhidmatGaar.</p>
+        <p className="mt-3 text-sm text-on-surface-variant font-medium text-center">Choose your role to continue to GharFix.</p>
       </motion.div>
 
       <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.1 }} className="w-full max-w-sm z-10 px-4">
