@@ -132,9 +132,9 @@ export default function App() {
 
   // View title map
   const viewTitles: Record<ViewState, string> = {
-    welcome: 'KhidmatGaar',
-    login: 'KhidmatGaar',
-    onboarding: 'KhidmatGaar',
+    welcome: 'GharFix',
+    login: 'GharFix',
+    onboarding: 'GharFix',
     home: userProfile?.name ? `Asalam-o-Alaikum, ${userProfile.name.split(' ')[0]}` : 'Asalam-o-Alaikum',
     search: 'Provider Matches',
     booking: 'Confirm Booking',
@@ -183,7 +183,7 @@ export default function App() {
             <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center shadow-lg">
               <Shield className="w-5 h-5 text-on-primary fill-current" />
             </div>
-            <span className="text-xl font-extrabold text-primary tracking-tight">KhidmatGaar</span>
+            <span className="text-xl font-extrabold text-primary tracking-tight">GharFix</span>
           </div>
         )}
 

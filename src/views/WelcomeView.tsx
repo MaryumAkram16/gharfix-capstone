@@ -56,7 +56,7 @@ export function WelcomeView({ onGetStarted }: { onGetStarted: () => void }) {
           animate={{ opacity: 1, y: 0 }}
           className="mb-8 text-center"
         >
-          <h1 className="text-3xl font-bold text-blue-900 mb-2">KhidmatGaar</h1>
+          <h1 className="text-3xl font-bold text-blue-900 mb-2">GharFix</h1>
           <p className="text-sm text-gray-600 font-medium">
             Aapki Zaroorat, Hamare Maahir
           </p>

@@ -1008,7 +1008,7 @@ export function ServiceQualityView({ payload, initialStage = 'en_route', onCompl
       <div className="flex justify-center">
         <p className="text-[9px] text-outline font-bold uppercase tracking-[0.2em] flex items-center gap-2">
           <Shield className="w-3 h-3" />
-          Protected by KhidmatGaar WF5
+          Protected by GharFix WF5
         </p>
       </div>
     </motion.div>
