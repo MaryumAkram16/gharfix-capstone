@@ -73,3 +73,17 @@ export function osmConfigFromEnv(env: Env, log?: Logger): OsmConfig {
     userAgent: env.OSM_USER_AGENT?.trim() || DEFAULT_USER_AGENT,
   };
 }
+
+export const DEFAULT_GOOGLE_PLACES_TIMEOUT_MS = 8000;
+
+export interface GoogleConfig {
+  apiKey: string;
+  timeoutMs: number;
+}
+
+/** null unless GOOGLE_MAPS_API_KEY is set: Google Places is opt-in (it needs a billing-enabled key). */
+export function googleConfigFromEnv(env: Env, log?: Logger): GoogleConfig | null {
+  const apiKey = env.GOOGLE_MAPS_API_KEY?.trim();
+  if (!apiKey) return null;
+  return { apiKey, timeoutMs: ms(env, 'GOOGLE_PLACES_TIMEOUT_MS', DEFAULT_GOOGLE_PLACES_TIMEOUT_MS, log) };
+}

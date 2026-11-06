@@ -113,6 +113,7 @@ All routes are wired in one place, `lib/app.ts` (`createApp()`), used by both th
      - `GMAIL_USER` + `GMAIL_APP_PASSWORD` (without them, emails are only logged)
      - `ALERT_EMAIL`, `CRON_SECRET`
      - `USE_DEMO_PROVIDERS` (§7)
+     - `GOOGLE_MAPS_API_KEY`, `GOOGLE_PLACES_TIMEOUT_MS` (§6, Google Places as provider source; needs billing)
      - `NOMINATIM_URL`, `OVERPASS_URL`, `OVERPASS_FALLBACK_URL`, `OSM_USER_AGENT`, and the timeouts `NOMINATIM_TIMEOUT_MS`, `OVERPASS_TIMEOUT_MS`, `OVERPASS_BUDGET_MS` (§6)
 3. In the Supabase SQL editor, in this order:
    1. `db/bookings.sql` (and `waitlist.sql`, `provider_scores.sql` for the unported workflows), if the tables don't exist yet.
@@ -182,6 +183,10 @@ Not tested live: no Gemini key was available while building this, so the Gemini 
 ---
 
 ## 6. Provider matching, pricing and the limits of OpenStreetMap
+
+**Google Places (optional).** With `GOOGLE_MAPS_API_KEY` set, step 2 asks Google Places API (New) Text Search first, as WF2 did ("Places Nearby Search1"): one request per service, biased to a 5 km circle, results outside it dropped. Providers then carry Google's real rating, review count, price level (→ WF2's base-rate table), open-now (→ four or two booking windows) and business status (→ `verified`), and responses say `data_source: "google_places"`. What n8n invented when Google had nothing (rating 4.0, 10 reviews, "reviewed today", on-time and cancellation rates derived from the rating) stays `null` and is listed in `data_gaps`. If Google fails (bad key, billing off, quota, timeout), an incident is recorded (`google.searchText`) and OpenStreetMap is searched instead; zero Google results are an answer and are not retried on OSM. Geocoding stays on Nominatim.
+
+Cost: the field mask includes rating, price and opening hours, which Google bills as the Text Search *Enterprise* SKU (a small free monthly allowance, then paid per 1,000 requests; check Google's current price list). A billing account is required even for the free allowance. Without the key nothing calls Google. This path is tested with faked HTTP only (`tests/matching/google.test.ts`, `tests/google-flow.test.ts`); no live Google request has been made.
 
 **Pipeline.**
 1. Geocode the location (Nominatim, Pakistan only, cached).
@@ -319,7 +324,7 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/postgres npx vitest run t
 
 **Checked by hand (not in CI):** the booking and match screens in Chromium with Playwright (Try again, 409 screen, no-ratings and demo labels, booking date at 00:30 PKT), and the reconcile workflow's shell step against a local stub (200 passes; 401 and missing secrets fail).
 
-**Not verified yet:** live calls to Supabase, Gemini, Nominatim, Overpass and Gmail; a Vercel deployment; a scheduled GitHub Actions run.
+**Not verified yet:** live calls to Supabase, Gemini, Google Places, Nominatim, Overpass and Gmail; a Vercel deployment; a scheduled GitHub Actions run.
 
 ---
 
@@ -328,11 +333,12 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/postgres npx vitest run t
 - **Overlap gap.** The unique index only catches two bookings with the *same* start time. Two simultaneous requests for overlapping windows (16:00 and 16:30 for a 150-minute job) can both pass the pre-check. A Postgres exclusion constraint is planned as `db/003`; the repository already maps its error (23P01) to `slot_taken`.
 - **5-second email wait.** A confirm waits up to 5 s for SMTP. A slower send is recorded as failed and left to the reconciler, so if it was eventually delivered the customer can get the confirmation twice. The same can happen if SMTP succeeds but recording `confirmation_sent_at` fails.
 - **Gmail limits.** Gmail's own sending limits apply (about 500 messages a day for a personal account), and Gmail sends as the authenticated account.
+- **Google Places.** Needs a billing-enabled key; it has no on-time or cancellation history and review dates are not requested, so those stay null.
 - **OpenStreetMap data.** No ratings, reviews, prices or road distance (§6). Coverage of small Pakistani businesses varies widely by area, and the public endpoints are rate-limited.
 - **Keyword parser.** It is dictionary-based. Spellings it doesn't know are missed, and the fuzzy matcher is deliberately strict to avoid false services.
 - **Unported workflows.** Quality loop, disputes, rescheduling and the provider dashboard still need n8n (503 without it). Their screens still check `response.ok` before reading the body.
 - **Scheduling.** GitHub may delay or skip scheduled runs, and the reconcile workflow only runs once it is on the default branch.
-- **Time limits.** The provider-matching functions have `maxDuration: 60`. A provider search is bounded by Nominatim (5 s) + Overpass (20 s across both instances) by default. If *every* dependency times out at once on the intent path (Gemini 8 s × 2, Nominatim 5 s, Overpass 20 s, Supabase capacity 8 s × 3 tries) the total can pass 60 s and Vercel stops the function; lower the timeouts if that matters. Other functions (`api/booking.ts`, `api/reconcile.ts`) use the plan's default duration.
+- **Time limits.** The provider-matching functions have `maxDuration: 60`. A provider search is bounded by Nominatim (5 s) + Overpass (20 s across both instances) by default, plus Google Places (8 s) first when its key is set. If *every* dependency times out at once on the intent path (Gemini 8 s × 2, Nominatim 5 s, Google 8 s, Overpass 20 s, Supabase capacity 8 s × 3 tries) the total can pass 60 s and Vercel stops the function; lower the timeouts if that matters. Other functions (`api/booking.ts`, `api/reconcile.ts`) use the plan's default duration.
 
 ---
 

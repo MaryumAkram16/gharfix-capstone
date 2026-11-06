@@ -16,6 +16,7 @@ const STEP_NAMES: Record<string, string> = {
   'supabase.findUnconfirmed': 'finding bookings whose confirmation email was not sent',
   'gemini.parse': 'understanding the customer request with Gemini',
   'osm.searchNearby': 'searching OpenStreetMap (Overpass) for nearby providers',
+  'google.searchText': 'searching Google Places for nearby providers',
   'osm.geocode': 'finding the location with OpenStreetMap (Nominatim)',
   'smtp.send': 'sending an email through Gmail SMTP',
 };
@@ -34,6 +35,9 @@ export function adviceFor(incident: Pick<Incident, 'step' | 'error_class'>): str
       return 'A table or column is missing. Run the pending migration(s) in db/ (001_booking_integrity.sql, 002_incidents.sql) in the Supabase SQL editor.';
     }
     return 'Supabase returned an unexpected error. Open the Vercel logs for the request id below.';
+  }
+  if (step === 'google.searchText') {
+    return 'Google Places did not answer. HTTP 403: the key in GOOGLE_MAPS_API_KEY is wrong, restricted, the Places API (New) is not enabled for its project, or billing is off. HTTP 429: quota used up. Timeouts or 5xx: Google outage, raise GOOGLE_PLACES_TIMEOUT_MS if it keeps happening. Meanwhile OpenStreetMap was searched instead (and demo providers after that, with USE_DEMO_PROVIDERS=1). Remove GOOGLE_MAPS_API_KEY to stop using Google.';
   }
   if (step.startsWith('osm.')) {
     return 'The public OpenStreetMap servers were slow or unreachable (the Overpass mirror was tried too). Nothing to do if it recovers. If it keeps happening: raise OVERPASS_TIMEOUT_MS / NOMINATIM_TIMEOUT_MS, or point OVERPASS_URL / OVERPASS_FALLBACK_URL / NOMINATIM_URL at your own or a commercial instance. With USE_DEMO_PROVIDERS=1, customers were shown labelled demo providers meanwhile; otherwise they were asked to try again.';

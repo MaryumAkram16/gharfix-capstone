@@ -54,6 +54,24 @@ export const OSM_DATA_GAPS = [
 /** Demo providers lack the same fields, and are not real businesses at all. */
 export const DEMO_DATA_GAPS = ['not a real business (demo data from db/seed/demo_providers.json)', ...OSM_DATA_GAPS] as const;
 
+/** What Google Places does not give us (or we do not request). */
+export const GOOGLE_DATA_GAPS = [
+  'last_review_date (review dates are not requested)',
+  'on_time_score',
+  'cancellation_rate',
+  'road distance (distance_km is straight-line)',
+  'photos',
+] as const;
+
+// WF2's price_level -> base rate table, with the Places API (New) enum names.
+const PRICE_LEVEL_RATE: Record<string, number> = {
+  PRICE_LEVEL_FREE: 400,
+  PRICE_LEVEL_INEXPENSIVE: 600,
+  PRICE_LEVEL_MODERATE: 900,
+  PRICE_LEVEL_EXPENSIVE: 1300,
+  PRICE_LEVEL_VERY_EXPENSIVE: 2000,
+};
+
 /** Great-circle distance in km. */
 export function haversineKm(a: GeoPoint, b: GeoPoint): number {
   const R = 6371;
@@ -83,6 +101,48 @@ export function toProvider(place: Place, { request, center, activeBookings }: Pr
   const availabilitySlots = isAtCapacity ? [] : ['09:00', '11:00'];
 
   const base = COMPLEXITY_KEYWORDS[request.service_type ?? ''] || 'basic';
+  const g = place.source === 'google_places' ? place.google : undefined;
+
+  if (g) {
+    // WF2 "Map Places -> Provider Schema" for Google results, minus its invented
+    // values: missing rating/reviews stay null (n8n used 4.0 / 10), the review
+    // date is not requested (n8n claimed "today"), and on-time/cancellation rates
+    // stay null (n8n derived them from the rating).
+    const rate = g.priceLevel ? PRICE_LEVEL_RATE[g.priceLevel] : undefined;
+    return {
+      id: place.id,
+      name: place.name,
+      owner: place.name,
+      services: place.matchedServices,
+      complexity_levels: COMPLEXITY_LEVELS[base],
+      areas: [request.location],
+      coordinates: { lat: place.lat, lng: place.lng },
+      address: place.address,
+      base_rate_pkr: rate ?? DEFAULT_BASE_RATE_PKR,
+      base_rate_source: rate ? 'google_price_level' : 'gharfix_default',
+      rating: g.rating,
+      review_count: g.reviewCount,
+      last_review_date: null,
+      on_time_score: null,
+      cancellation_rate: null,
+      // WF2: open now -> four windows, otherwise (or unknown) two.
+      availability_slots: isAtCapacity ? [] : g.openNow === true ? ['09:00', '11:00', '14:00', '16:00'] : ['09:00', '11:00'],
+      active_bookings: active,
+      max_daily_bookings: MAX_DAILY_BOOKINGS,
+      at_capacity: isAtCapacity,
+      distance_km: distanceKm,
+      distance_type: 'straight_line',
+      verified: g.businessStatus === 'OPERATIONAL',
+      // WF2's formula, computed only from real numbers.
+      reputation_score: g.rating === null ? null : Math.min(99, Math.round((g.rating / 5) * 70 + Math.min(30, ((g.reviewCount ?? 0) / 100) * 30))),
+      google_maps_url: g.mapsUrl || `https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lng}`,
+      osm_url: '',
+      place_id: place.id,
+      photos: [],
+      source: 'google_places',
+      data_gaps: [...(g.rating === null ? ['rating (none on Google yet)', 'review_count'] : []), ...(rate ? [] : ['price (base_rate_pkr is the GharFix default)']), ...GOOGLE_DATA_GAPS],
+    };
+  }
 
   return {
     id: place.id,

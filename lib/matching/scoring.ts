@@ -91,7 +91,8 @@ export function scoreProvider(provider: Provider, serviceType: string, intent: S
   let reviewScore: number | null = null;
   if (provider.rating !== null) {
     const ratingScore = (provider.rating / 5) * 100;
-    const daysSinceReview = Math.floor((now.getTime() - new Date(provider.last_review_date as string).getTime()) / 86400000);
+    // Google gives a rating without review dates: no date, no recency bonus.
+    const daysSinceReview = provider.last_review_date === null ? Infinity : Math.floor((now.getTime() - new Date(provider.last_review_date).getTime()) / 86400000);
     const recencyBonus = daysSinceReview <= 3 ? 15 : daysSinceReview <= 7 ? 10 : daysSinceReview <= 30 ? 5 : 0;
     reviewScore = Math.min(100, ratingScore + recencyBonus);
   }
