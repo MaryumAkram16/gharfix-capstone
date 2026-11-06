@@ -8,6 +8,7 @@ export {
   guarded, resilientCapacity, resilientRecords, resilientDirectory, resilientEmail, resilientGeocoder, resilientParser, resilientRepository, type GuardContext,
 } from './guard.js';
 export type { IncidentRecorder } from './recorder.js';
+export { NO_RETRY as NO_RETRY_POLICY } from './policies.js';
 
 type Env = Record<string, string | undefined>;
 type FetchLike = (input: string, init: RequestInit) => Promise<Response>;

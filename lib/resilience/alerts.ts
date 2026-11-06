@@ -16,6 +16,7 @@ const STEP_NAMES: Record<string, string> = {
   'supabase.findBooking': 'reading a booking from Supabase',
   'supabase.updateBooking': 'updating a booking in Supabase',
   'supabase.providerHistory': "reading a provider's booking history from Supabase",
+  'supabase.addToWaitlist': 'adding a customer to the waitlist in Supabase',
   'supabase.findUnconfirmed': 'finding bookings whose confirmation email was not sent',
   'gemini.parse': 'understanding the customer request with Gemini',
   'osm.searchNearby': 'searching OpenStreetMap (Overpass) for nearby providers',

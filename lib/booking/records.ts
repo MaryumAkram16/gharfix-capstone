@@ -60,6 +60,8 @@ export interface BookingPatch {
   transcript_included?: string | null;
   image_base64_data?: string | null;
   provider_new_rating?: number | null;
+  booking_visibility?: string | null;
+  provider_action_locked?: boolean;
 }
 
 /** Compare-and-set conditions: the update applies only while the row still has these values. */

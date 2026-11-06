@@ -1,6 +1,9 @@
 import { EMAIL_WAIT_MS, type Env, type FetchLike } from '../booking/deps.js';
-import { createSupabaseBookingRecords, type BookingRecords } from '../booking/records.js';
-import { supabaseConfigFromEnv } from '../booking/repository.js';
+import { createBookingRecords, type BookingRecords } from '../booking/records.js';
+import { createSupabaseRest, supabaseConfigFromEnv, type SupabaseRest } from '../booking/repository.js';
+import { guarded, NO_RETRY_POLICY } from '../resilience/index.js';
+import { handleRescheduleRequest } from '../reschedule/handler.js';
+import { createWaitlist, type Waitlist } from '../reschedule/waitlist.js';
 import type { EmailSender } from '../email/types.js';
 import { internalError } from '../http/errors.js';
 import type { LocalHandler } from '../http/proxy.js';
@@ -26,13 +29,15 @@ export interface RecordsRouteOptions {
 export function createRecordsRoute(
   workflow: string,
   opts: RecordsRouteOptions,
-  run: (body: Record<string, unknown>, deps: { records: BookingRecords; email: EmailSender; log: Logger; emailTimeoutMs: number }) => Promise<import('../http/errors.js').HttpResult<unknown>>,
+  run: (body: Record<string, unknown>, deps: RecordsDeps, meta: import('../http/proxy.js').RouteMeta) => Promise<import('../http/errors.js').HttpResult<unknown>>,
 ): LocalHandler {
+  let rest: SupabaseRest | null = null;
   let records: BookingRecords | null = null;
   return async (body, meta) => {
-    if (!records) {
+    if (!rest || !records) {
       try {
-        records = createSupabaseBookingRecords(supabaseConfigFromEnv(opts.env), { fetch: opts.fetch });
+        rest = createSupabaseRest(supabaseConfigFromEnv(opts.env), { fetch: opts.fetch });
+        records = createBookingRecords(rest);
       } catch (err) {
         opts.log.error(`${workflow}.config_error`, { error: err, request_id: meta.requestId });
         await opts.recorder?.record(
@@ -43,15 +48,26 @@ export function createRecordsRoute(
       }
     }
     const log = opts.log.child({ request_id: meta.requestId });
-    if (!opts.recorder) return run(body, { records, email: opts.email, log, emailTimeoutMs: EMAIL_WAIT_MS });
+    const waitlist = createWaitlist(rest);
+    if (!opts.recorder) return run(body, { records, waitlist, email: opts.email, log, emailTimeoutMs: EMAIL_WAIT_MS }, meta);
     const ctx = { workflow, requestId: meta.requestId, recorder: opts.recorder };
     return run(body, {
       records: resilientRecords(records, ctx),
+      // An insert without a unique key: never retried, so a retry cannot add the customer twice.
+      waitlist: { add: (entry) => guarded(ctx, 'supabase.addToWaitlist', NO_RETRY_POLICY, () => waitlist.add(entry), `booking ${entry.booking_id}`) },
       email: resilientEmail(opts.email, ctx, EMAIL_WAIT_MS),
       log,
       emailTimeoutMs: EMAIL_WAIT_MS + 500,
-    });
+    }, meta);
   };
+}
+
+export interface RecordsDeps {
+  records: BookingRecords;
+  waitlist: Waitlist;
+  email: EmailSender;
+  log: Logger;
+  emailTimeoutMs: number;
 }
 
 export function createDisputeRoute(opts: RecordsRouteOptions): LocalHandler {
@@ -64,4 +80,10 @@ export function createQualityRoute(opts: RecordsRouteOptions): LocalHandler {
     const now = () => new Date();
     return handleQualityRequest(body, { ...deps, now, escalate: (b) => handleDisputeRequest(b, { ...deps, now, log: deps.log.child({ escalated_from: 'khadmat-quality' }) }) });
   });
+}
+
+/** khadmat-reschedule (WF7). The replacement booking goes through `bookingRoute` (khadmat-booking) in-process. */
+export function createRescheduleRoute(opts: RecordsRouteOptions, bookingRoute: LocalHandler): LocalHandler {
+  return createRecordsRoute('khadmat-reschedule', opts, (body, deps, meta) =>
+    handleRescheduleRequest(body, { ...deps, now: () => new Date(), booking: (b) => bookingRoute(b, meta) }));
 }

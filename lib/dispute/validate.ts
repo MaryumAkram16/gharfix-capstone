@@ -38,7 +38,8 @@ function text(v: unknown, max: number): string | undefined {
   return typeof v === 'string' ? v.trim().slice(0, max) : undefined;
 }
 
-function alternatives(v: unknown): Alternative[] {
+/** Alternatives the browser kept from provider matching: untrusted, so only typed fields, at most 5. */
+export function parseAlternatives(v: unknown): Alternative[] {
   if (!Array.isArray(v)) return [];
   const out: Alternative[] = [];
   for (const a of v.slice(0, MAX_ALTERNATIVES)) {
@@ -117,7 +118,7 @@ export function validateDispute(body: Record<string, unknown>): Validated<Disput
         customer_approved_overrun: approved!,
         estimated_duration_mins: estimated ?? null,
         actual_duration_mins: actual ?? null,
-        alternatives: alternatives(body.alternatives),
+        alternatives: parseAlternatives(body.alternatives),
       },
     },
   };

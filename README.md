@@ -15,7 +15,8 @@ GharFix books home-service providers (plumbers, electricians, AC technicians…)
 | `khadmat-booking` | WF4 (n8n + Gmail node) | `lib/booking/` (Supabase, Nodemailer) |
 | `khadmat-quality` | WF5 (n8n + Gmail node) | `lib/quality/` (Supabase, Nodemailer), §8 |
 | `khadmat-dispute` | WF6 (n8n + Gmail node) | `lib/dispute/` (Supabase, Nodemailer), §8 |
-| `khadmat-reschedule`, `-provider-dashboard` | WF7, WF8 | **not ported yet**: forwarded to n8n only if `N8N_WEBHOOK_BASE_URL` is set, otherwise they answer 503 |
+| `khadmat-reschedule` | WF7 (n8n + Gmail node) | `lib/reschedule/` (Supabase, in-process booking, Nodemailer), §8 |
+| `khadmat-provider-dashboard` | WF8 | **not ported yet**: forwarded to n8n only if `N8N_WEBHOOK_BASE_URL` is set, otherwise they answer 503 |
 
 ---
 
@@ -28,7 +29,7 @@ GharFix books home-service providers (plumbers, electricians, AC technicians…)
 5. [Intent parsing](#5-intent-parsing)
 6. [Provider matching, pricing and the limits of OpenStreetMap](#6-provider-matching-pricing-and-the-limits-of-openstreetmap)
 7. [Demo-data fallback](#7-demo-data-fallback)
-8. [After the booking: quality loop and disputes](#8-after-the-booking-quality-loop-and-disputes)
+8. [After the booking: quality loop, disputes, cancel and reschedule](#8-after-the-booking-quality-loop-disputes-cancel-and-reschedule)
 9. [Self-healing: retries, incidents, alerts, reconcile](#9-self-healing-retries-incidents-alerts-reconcile)
 10. [Tests](#10-tests)
 11. [Known limitations](#11-known-limitations)
@@ -266,7 +267,26 @@ Off by default. With `USE_DEMO_PROVIDERS=1` (exactly `1`), matching falls back t
 
 ---
 
-## 8. After the booking: quality loop and disputes
+## 8. After the booking: quality loop, disputes, cancel and reschedule
+
+### Cancel and reschedule (`khadmat-reschedule`, WF7)
+
+Ported in `lib/reschedule/`: cancel only, customer reschedule, and provider cancellation with automatic rebooking, with n8n's compensation (PKR 250 under 3 h, PKR 100 under 12 h), slot choice, waitlist and messages; `tests/reschedule/rules.test.ts` runs the original nodes.
+
+**Built to be retried safely.** The reschedule can fail at any step (Supabase, the booking step, a timeout) and the same request sent again finishes the job without doubling it:
+1. The original booking moves `confirmed` → `user_rescheduling` / `provider_cancelled` (compare-and-set). A retry finds it there and resumes.
+2. The chosen replacement provider and slot are written on the original booking **before** booking them; a retry reuses them.
+3. The new booking goes through `khadmat-booking` in-process with the idempotency key `reschedule-<original id>`, so a retry replays it instead of inserting a second one. n8n called WF4 over HTTP with no key. If someone else takes the slot at that moment, the recorded choice is cleared so the retry picks again.
+4. Only then is the original marked `rescheduled` (with the new booking id). If that last write fails, the response says `original_update_pending: true` and a retry completes it.
+
+`tests/reschedule/handler.test.ts` crashes the flow after step 3 and checks that the retry books nothing new.
+
+**Other changes:**
+- Facts come from the booking row (price, provider, date, slot, email), not the request, with the same caller-email check.
+- The penalty uses the provider's real history (n8n assumed 8%) and recommends suspension instead of claiming it.
+- The provider who cancelled is never picked as their own replacement.
+- n8n compared the original "16:00" with slot labels like "4:00 PM", missed, and moved customers to the first free slot; the port keeps the original time when it is free.
+- Times and the "alternate dates" are Pakistan time; texts say GharFix.
 
 ### Quality loop (`khadmat-quality`, WF5)
 
@@ -356,9 +376,10 @@ Every external dependency is faked in the unit tests: Supabase, Gemini, Nominati
 | Retries, policies, incidents, alerts, de-duplication, booking with resilience | `tests/resilience/` |
 | Dispute rules vs the original n8n code, dispute handler (ownership, compare-and-set, email) | `tests/dispute/` |
 | Quality-loop stages vs the original n8n code, state machine, feedback escalation | `tests/quality/` |
+| Reschedule rules vs the original n8n code; cancel, reschedule, crash-and-retry, waitlist | `tests/reschedule/` |
 | Reconciler, its auth, and the workflow file | `tests/reconcile/` |
 | Frontend helpers: booking response handling, keyword parser, transformer, Pakistan date | `tests/frontend/` |
-| Whole flows through `createApp()` with only HTTP faked | `tests/app.test.ts`, `tests/intent-flow.test.ts`, `tests/demo-flow.test.ts`, `tests/google-flow.test.ts`, `tests/dispute-flow.test.ts`, `tests/quality-flow.test.ts` |
+| Whole flows through `createApp()` with only HTTP faked | `tests/app.test.ts`, `tests/intent-flow.test.ts`, `tests/demo-flow.test.ts`, `tests/google-flow.test.ts`, `tests/dispute-flow.test.ts`, `tests/quality-flow.test.ts`, `tests/reschedule-flow.test.ts` |
 | `api/` loaded in plain Node ESM (no bundler), as Vercel runs it | `tests/api/esm.test.ts` |
 
 **Migrations against real Postgres.** These are skipped unless `TEST_DATABASE_URL` points at a **local** server; the helper refuses anything else. They create and drop their own throwaway database:
@@ -371,7 +392,7 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/postgres npx vitest run t
 
 **Verified live** (production Vercel logs, 2026-11-06): a chat message parsed by Gemini, providers found with Google Places around a Nominatim-geocoded location, a booking saved in Supabase, and its confirmation sent through Gmail SMTP.
 
-**Not verified yet:** Overpass from Vercel (it timed out in every logged request, so the demo fallback or Google covered it); the quality loop and disputes against the real database (tested with fakes only); a scheduled GitHub Actions run.
+**Not verified yet:** Overpass from Vercel (it timed out in every logged request, so the demo fallback or Google covered it); the quality loop, disputes and rescheduling against the real database (tested with fakes only); a scheduled GitHub Actions run.
 
 ---
 
@@ -384,8 +405,8 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/postgres npx vitest run t
 - **OpenStreetMap data.** No ratings, reviews, prices or road distance (§6). Coverage of small Pakistani businesses varies widely by area, and the public endpoints are rate-limited.
 - **Keyword parser.** It is dictionary-based. Spellings it doesn't know are missed, and the fuzzy matcher is deliberately strict to avoid false services.
 - **Tracking is simulated.** The customer's screen moves the booking through en route / arrived / completed; there is no provider app or live location. The screen still shows a generic connection error for a 409 (out of order) instead of the server's message.
-- **No login.** Tracking and disputes check that the caller's email matches the booking's, but an email address is not a secret: anyone who knows both the booking id and the email can file a dispute or move the tracking.
-- **Unported workflows.** Rescheduling and the provider dashboard still need n8n (503 without it). Their screens still check `response.ok` before reading the body.
+- **No login.** Tracking and disputes check that the caller's email matches the booking's, but an email address is not a secret: anyone who knows both the booking id and the email can file a dispute, move the tracking, or cancel. The provider-cancel screen has no provider login either.
+- **Unported workflows.** The provider dashboard (WF8) and the nightly score refresh (WF8b) still need n8n (503 without it). Their screens still check `response.ok` before reading the body.
 - **Scheduling.** GitHub may delay or skip scheduled runs, and the reconcile workflow only runs once it is on the default branch.
 - **Time limits.** The provider-matching functions have `maxDuration: 60`. A provider search is bounded by Nominatim (5 s) + Overpass (20 s across both instances) by default, plus Google Places (8 s) first when its key is set. If *every* dependency times out at once on the intent path (Gemini 8 s × 2, Nominatim 5 s, Google 8 s, Overpass 20 s, Supabase capacity 8 s × 3 tries) the total can pass 60 s and Vercel stops the function; lower the timeouts if that matters. Other functions (`api/booking.ts`, `api/reconcile.ts`) use the plan's default duration.
 
@@ -393,7 +414,7 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/postgres npx vitest run t
 
 ## 12. The original n8n design
 
-The JSON in `n8n-workflows/` is kept unchanged as the design record. WF1–WF6 are ported; the rest are not yet:
+The JSON in `n8n-workflows/` is kept unchanged as the design record. WF1–WF7 are ported; WF8 and WF8b are not yet:
 
 | Workflow | Purpose |
 |---|---|
