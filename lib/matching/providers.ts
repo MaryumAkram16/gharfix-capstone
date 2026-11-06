@@ -30,6 +30,16 @@ const COMPLEXITY_KEYWORDS: Record<string, Complexity> = {
   'generator mechanic': 'intermediate',
 };
 
+// Looked up without regard to case: Gemini sends "Plumber" or "AC Repair"
+// (production logs, 2026-11-06), which the n8n table lookup would have
+// missed and silently treated as basic.
+const COMPLEXITY_BY_NAME = new Map(Object.entries(COMPLEXITY_KEYWORDS).map(([k, v]) => [k.toLowerCase(), v]));
+
+/** Complexity tier for a service name, any case or surrounding spaces; unknown -> basic, as in n8n. */
+export function complexityFor(serviceType: string | null | undefined): Complexity {
+  return COMPLEXITY_BY_NAME.get((serviceType ?? '').trim().toLowerCase()) ?? 'basic';
+}
+
 const COMPLEXITY_LEVELS: Record<Complexity, Complexity[]> = {
   basic: ['basic'],
   intermediate: ['basic', 'intermediate'],
@@ -100,7 +110,7 @@ export function toProvider(place: Place, { request, center, activeBookings }: Pr
   // as n8n did when Google had no opening_hours.
   const availabilitySlots = isAtCapacity ? [] : ['09:00', '11:00'];
 
-  const base = COMPLEXITY_KEYWORDS[request.service_type ?? ''] || 'basic';
+  const base = complexityFor(request.service_type);
   const g = place.source === 'google_places' ? place.google : undefined;
 
   if (g) {
