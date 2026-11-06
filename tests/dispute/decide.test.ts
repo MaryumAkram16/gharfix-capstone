@@ -129,6 +129,16 @@ describe('where the port deliberately differs from n8n', () => {
     expect(n8nNode('Price Disagreement Handler')(asRouter(facts(), {})).price_analysis.decision).toBe('NO_OVERCHARGE');
   });
 
+  it('a refund based only on the customer\'s stated charge waits for a person', () => {
+    const r = decideDispute(facts(), claims({ dispute_type: 'price_disagreement', charged_price_pkr: 3000 }), ctx());
+    expect(r.status).toBe('escalated_to_human');
+    expect(r.price_analysis).toMatchObject({ decision: 'FULL_EXCESS_REFUND', charged_pkr: 3000 });
+    expect((r.resolution as any).refund).toMatchObject({ amount_pkr: 1000, method: 'After a person confirms the charged amount' });
+    expect(r.customer_message).toContain('tasdeeq');
+    // No refund due: nothing to confirm.
+    expect(decideDispute(facts(), claims({ dispute_type: 'price_disagreement', charged_price_pkr: 2000 }), ctx()).status).toBe('dispute_resolved');
+  });
+
   it('the final price recorded on the booking beats the customer figure', () => {
     const r = decideDispute(facts({ final_price_pkr: 2000 }), claims({ dispute_type: 'price_disagreement', charged_price_pkr: 9000 }), ctx());
     expect((r.price_analysis as any).decision).toBe('NO_OVERCHARGE');

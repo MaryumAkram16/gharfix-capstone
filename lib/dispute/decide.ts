@@ -7,6 +7,8 @@ import { normaliseSlot } from '../booking/slot.js';
 // - Facts come from the booking row (DisputeFacts), not the request. n8n
 //   refunded `price_pkr` as sent by the browser and emailed `user_email` as
 //   sent by the browser, so anyone could set both.
+// - A refund based only on the customer's stated charge is analysed but
+//   left for a person to confirm (status escalated_to_human).
 // - No invented inputs. n8n assumed a 12% cancellation rate when none was
 //   sent, rating 1/5 when none was sent (a free-text complaint became a
 //   CRITICAL 50% refund), a charged price of 0 (every price dispute became
@@ -330,8 +332,10 @@ function priceDisagreement(f: DisputeFacts, c: DisputeClaims, ctx: DecisionConte
     refundAmount = difference;
     providerNote = `Major overcharge of ${overchargePercent}%. Full excess PKR ${refundAmount} refunded. Escalated for review.`;
   }
+  // Only the customer's word for the charged amount: the analysis stands, but a person confirms before any refund.
+  const unverified = f.final_price_pkr === null && refundAmount > 0;
   return {
-    status: 'dispute_resolved',
+    status: unverified ? 'escalated_to_human' : 'dispute_resolved',
     dispute_type: 'price_disagreement',
     booking_id: f.booking_id,
     provider_name: f.provider_name,
@@ -339,7 +343,11 @@ function priceDisagreement(f: DisputeFacts, c: DisputeClaims, ctx: DecisionConte
     user_email: f.user_email,
     price_analysis: { quoted_pkr: quotedPrice, charged_pkr: charged, difference_pkr: difference, overcharge_percent: overchargePercent, decision },
     resolution: {
-      refund: { amount_pkr: refundAmount, eligible: refundAmount > 0, method: refundAmount > 0 ? 'Credit on next booking or cash refund' : 'No refund applicable' },
+      refund: {
+        amount_pkr: refundAmount,
+        eligible: refundAmount > 0,
+        method: unverified ? 'After a person confirms the charged amount' : refundAmount > 0 ? 'Credit on next booking or cash refund' : 'No refund applicable',
+      },
       provider_action: providerNote,
       flagged: difference > 0,
     },
@@ -349,7 +357,9 @@ function priceDisagreement(f: DisputeFacts, c: DisputeClaims, ctx: DecisionConte
       decision_factors: ['quoted_price', 'charged_price', 'overcharge_percentage', 'tolerance_band'],
     },
     customer_message:
-      refundAmount > 0
+      unverified
+        ? `Aapka case record ho gaya. Quoted price PKR ${quotedPrice} tha aur aap ke mutabiq PKR ${charged} charge hua. Charge ki tasdeeq ke baad PKR ${refundAmount} refund milega; hamari team 24 ghante mein rabta karegi.`
+        : refundAmount > 0
         ? `Aapka case review hua. Quoted price PKR ${quotedPrice} tha lekin PKR ${charged} charge hua. PKR ${refundAmount} refund approve ho gaya.`
         : difference > 0
           ? `Farq PKR ${difference} hai jo 10% tolerance ke andar hai. Yeh acceptable variation hai — provider ko warning di gayi.`

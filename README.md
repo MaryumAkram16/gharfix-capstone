@@ -276,6 +276,7 @@ Off by default. With `USE_DEMO_PROVIDERS=1` (exactly `1`), matching falls back t
   - The provider's cancellation rate is computed from their bookings (`no_show` + `provider_cancelled` out of all), instead of n8n's assumed 12%.
   - A complaint with no rating goes to a person (`escalated_to_human`, severity `UNRATED`). n8n assumed 1/5, so any written complaint became a CRITICAL 50% refund.
   - A price dispute with no recorded final price and no customer figure goes to a person. n8n assumed PKR 0 charged and always answered "no overcharge".
+  - A refund that rests only on the customer's stated charge is calculated but marked `escalated_to_human`: a person confirms the amount first.
   - An overrun dispute must send both durations (n8n assumed 60 and 90 minutes).
 - **Urgency uses the booked slot in Pakistan time.** n8n used midnight UTC of the date.
 - **Invalid requests stop with a 400.** In n8n an unknown `dispute_type` or missing `booking_id` still ran the overrun branch and PATCHed `booking_id=eq.undefined`.
