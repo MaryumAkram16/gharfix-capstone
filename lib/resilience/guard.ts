@@ -1,3 +1,4 @@
+import type { DashboardStore } from '../dashboard/store.js';
 import type { BookingRecords } from '../booking/records.js';
 import type { CapacityReader, ReconcileReader, BookingRepository } from '../booking/repository.js';
 import type { EmailSender } from '../email/types.js';
@@ -92,6 +93,16 @@ export function resilientRecords(records: BookingRecords, ctx: GuardContext): Bo
     find: (id) => guarded(ctx, 'supabase.findBooking', SUPABASE_READ, () => records.find(id)),
     update: (id, patch, guard) => guarded(ctx, 'supabase.updateBooking', NO_RETRY, () => records.update(id, patch, guard), `booking ${id}`),
     providerHistory: (providerId) => guarded(ctx, 'supabase.providerHistory', SUPABASE_READ, () => records.providerHistory(providerId)),
+  };
+}
+
+/** WF8/WF8b reads are retried; the score upsert is not (the nightly run repeats it anyway). */
+export function resilientDashboardStore(store: DashboardStore, ctx: GuardContext): DashboardStore {
+  return {
+    providerBookings: (id) => guarded(ctx, 'supabase.providerBookings', SUPABASE_READ, () => store.providerBookings(id)),
+    platformDone: () => guarded(ctx, 'supabase.platformDone', SUPABASE_READ, () => store.platformDone()),
+    allBookings: () => guarded(ctx, 'supabase.allBookings', SUPABASE_READ, () => store.allBookings()),
+    upsertScores: (rows) => guarded(ctx, 'supabase.upsertScores', NO_RETRY, () => store.upsertScores(rows), `${rows.length} provider(s)`),
   };
 }
 

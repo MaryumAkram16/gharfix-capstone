@@ -16,7 +16,9 @@ GharFix books home-service providers (plumbers, electricians, AC technicians…)
 | `khadmat-quality` | WF5 (n8n + Gmail node) | `lib/quality/` (Supabase, Nodemailer), §8 |
 | `khadmat-dispute` | WF6 (n8n + Gmail node) | `lib/dispute/` (Supabase, Nodemailer), §8 |
 | `khadmat-reschedule` | WF7 (n8n + Gmail node) | `lib/reschedule/` (Supabase, in-process booking, Nodemailer), §8 |
-| `khadmat-provider-dashboard` | WF8 | **not ported yet**: forwarded to n8n only if `N8N_WEBHOOK_BASE_URL` is set, otherwise they answer 503 |
+| `khadmat-provider-dashboard` + nightly scores | WF8, WF8b | `lib/dashboard/`, `api/provider-scores.ts` (GitHub Actions nightly), §8 |
+
+Every endpoint now runs in-process; `N8N_WEBHOOK_BASE_URL` is no longer used for any of them.
 
 ---
 
@@ -29,7 +31,7 @@ GharFix books home-service providers (plumbers, electricians, AC technicians…)
 5. [Intent parsing](#5-intent-parsing)
 6. [Provider matching, pricing and the limits of OpenStreetMap](#6-provider-matching-pricing-and-the-limits-of-openstreetmap)
 7. [Demo-data fallback](#7-demo-data-fallback)
-8. [After the booking: quality loop, disputes, cancel and reschedule](#8-after-the-booking-quality-loop-disputes-cancel-and-reschedule)
+8. [After the booking: quality loop, disputes, reschedule, provider dashboard](#8-after-the-booking-quality-loop-disputes-reschedule-provider-dashboard)
 9. [Self-healing: retries, incidents, alerts, reconcile](#9-self-healing-retries-incidents-alerts-reconcile)
 10. [Tests](#10-tests)
 11. [Known limitations](#11-known-limitations)
@@ -131,7 +133,7 @@ All routes are wired in one place, `lib/app.ts` (`createApp()`), used by both th
 **Deploying on Vercel:**
 - Set the same env vars in the Vercel project.
 - Apply the migrations **before** deploying code that uses them.
-- For the 15-minute reconcile, add the repository secrets `RECONCILE_URL` (e.g. `https://<app>.vercel.app/api/reconcile`) and `CRON_SECRET`. Scheduled workflows only run from the default branch.
+- For the 15-minute reconcile, add the repository secrets `RECONCILE_URL` (e.g. `https://<app>.vercel.app/api/reconcile`) and `CRON_SECRET`. For the nightly provider scores, also `PROVIDER_SCORES_URL` (e.g. `https://<app>.vercel.app/api/provider-scores`). Scheduled workflows only run from the default branch.
 
 Not yet done: a deployment to Vercel has not been made from this branch.
 
@@ -267,7 +269,20 @@ Off by default. With `USE_DEMO_PROVIDERS=1` (exactly `1`), matching falls back t
 
 ---
 
-## 8. After the booking: quality loop, disputes, cancel and reschedule
+## 8. After the booking: quality loop, disputes, reschedule, provider dashboard
+
+### Provider dashboard and nightly scores (`khadmat-provider-dashboard`, WF8 / WF8b)
+
+Ported in `lib/dashboard/`: one engine for the live dashboard and the nightly `provider_scores` refresh (`api/provider-scores.ts`, called by `.github/workflows/provider-scores.yml` at 01:47 Pakistan time with the same `CRON_SECRET` bearer token as reconcile). Workload, earnings, reputation, cancellations, loyalty, demand, rate suggestion and tips keep n8n's thresholds; `tests/dashboard/engine.test.ts` runs the original engine on the same bookings.
+
+**What changed, and why:**
+- **Completed jobs are counted.** n8n counted only `status = 'completed'`, which nothing ever sets (WF5 writes `current_status = 'completed'`, then `status = 'feedback_done'`), so every provider showed 0 jobs, PKR 0 and no ratings. The port counts a job as done when either field says `completed` or `feedback_done`.
+- **Customer data is masked.** The dashboard has no login and provider ids are public (OSM and Google ids). n8n returned every repeat customer's email; the port shows `a***@gmail.com` and first names only.
+- **The cancellation rate is the provider's own** (`no_show`, `provider_cancelled`); n8n also counted customers cancelling.
+- **No invented platform average:** n8n assumed PKR 1200 with no data and called a provider with no earnings "FAIR"; the port says `NOT_ENOUGH_DATA`.
+- **No paid search per page view:** n8n re-ran provider matching (a Google Places call) for the profile on every dashboard load. The port uses the provider details recorded on their latest booking (`profile.source: "booking_snapshot"`).
+- **The provider id is quoted in the `or=(...)` filter** (n8n spliced it in raw); "today" is the Pakistan date and slots are normalised, so "4:00 PM" counts as 16:00.
+- Reads are retried, failures are incidents; the nightly upsert writes in chunks of 500.
 
 ### Cancel and reschedule (`khadmat-reschedule`, WF7)
 
@@ -377,9 +392,10 @@ Every external dependency is faked in the unit tests: Supabase, Gemini, Nominati
 | Dispute rules vs the original n8n code, dispute handler (ownership, compare-and-set, email) | `tests/dispute/` |
 | Quality-loop stages vs the original n8n code, state machine, feedback escalation | `tests/quality/` |
 | Reschedule rules vs the original n8n code; cancel, reschedule, crash-and-retry, waitlist | `tests/reschedule/` |
+| Dashboard engine vs the original n8n code; masking, completed-job counting, nightly scores | `tests/dashboard/` |
 | Reconciler, its auth, and the workflow file | `tests/reconcile/` |
 | Frontend helpers: booking response handling, keyword parser, transformer, Pakistan date | `tests/frontend/` |
-| Whole flows through `createApp()` with only HTTP faked | `tests/app.test.ts`, `tests/intent-flow.test.ts`, `tests/demo-flow.test.ts`, `tests/google-flow.test.ts`, `tests/dispute-flow.test.ts`, `tests/quality-flow.test.ts`, `tests/reschedule-flow.test.ts` |
+| Whole flows through `createApp()` with only HTTP faked | `tests/app.test.ts`, `tests/intent-flow.test.ts`, `tests/demo-flow.test.ts`, `tests/google-flow.test.ts`, `tests/dispute-flow.test.ts`, `tests/quality-flow.test.ts`, `tests/reschedule-flow.test.ts`, `tests/dashboard-flow.test.ts` |
 | `api/` loaded in plain Node ESM (no bundler), as Vercel runs it | `tests/api/esm.test.ts` |
 
 **Migrations against real Postgres.** These are skipped unless `TEST_DATABASE_URL` points at a **local** server; the helper refuses anything else. They create and drop their own throwaway database:
@@ -392,7 +408,7 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/postgres npx vitest run t
 
 **Verified live** (production Vercel logs, 2026-11-06): a chat message parsed by Gemini, providers found with Google Places around a Nominatim-geocoded location, a booking saved in Supabase, and its confirmation sent through Gmail SMTP.
 
-**Not verified yet:** Overpass from Vercel (it timed out in every logged request, so the demo fallback or Google covered it); the quality loop, disputes and rescheduling against the real database (tested with fakes only); a scheduled GitHub Actions run.
+**Not verified yet:** Overpass from Vercel (it timed out in every logged request, so the demo fallback or Google covered it); the quality loop, disputes, rescheduling, dashboard and nightly scores against the real database (tested with fakes only); a scheduled GitHub Actions run.
 
 ---
 
@@ -405,8 +421,7 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/postgres npx vitest run t
 - **OpenStreetMap data.** No ratings, reviews, prices or road distance (§6). Coverage of small Pakistani businesses varies widely by area, and the public endpoints are rate-limited.
 - **Keyword parser.** It is dictionary-based. Spellings it doesn't know are missed, and the fuzzy matcher is deliberately strict to avoid false services.
 - **Tracking is simulated.** The customer's screen moves the booking through en route / arrived / completed; there is no provider app or live location. The screen still shows a generic connection error for a 409 (out of order) instead of the server's message.
-- **No login.** Tracking and disputes check that the caller's email matches the booking's, but an email address is not a secret: anyone who knows both the booking id and the email can file a dispute, move the tracking, or cancel. The provider-cancel screen has no provider login either.
-- **Unported workflows.** The provider dashboard (WF8) and the nightly score refresh (WF8b) still need n8n (503 without it). Their screens still check `response.ok` before reading the body.
+- **No login.** The provider dashboard answers for any provider id (customer emails are masked, names cut to first names). Tracking and disputes check that the caller's email matches the booking's, but an email address is not a secret: anyone who knows both the booking id and the email can file a dispute, move the tracking, or cancel. The provider-cancel screen has no provider login either.
 - **Scheduling.** GitHub may delay or skip scheduled runs, and the reconcile workflow only runs once it is on the default branch.
 - **Time limits.** The provider-matching functions have `maxDuration: 60`. A provider search is bounded by Nominatim (5 s) + Overpass (20 s across both instances) by default, plus Google Places (8 s) first when its key is set. If *every* dependency times out at once on the intent path (Gemini 8 s × 2, Nominatim 5 s, Google 8 s, Overpass 20 s, Supabase capacity 8 s × 3 tries) the total can pass 60 s and Vercel stops the function; lower the timeouts if that matters. Other functions (`api/booking.ts`, `api/reconcile.ts`) use the plan's default duration.
 
@@ -414,7 +429,7 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/postgres npx vitest run t
 
 ## 12. The original n8n design
 
-The JSON in `n8n-workflows/` is kept unchanged as the design record. WF1–WF7 are ported; WF8 and WF8b are not yet:
+The JSON in `n8n-workflows/` is kept unchanged as the design record. All of them are ported:
 
 | Workflow | Purpose |
 |---|---|
