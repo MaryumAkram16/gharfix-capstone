@@ -1,4 +1,4 @@
-import { PROVIDER_FAULT_STATUSES, type BookingPatch, type BookingRecord, type BookingRecords } from '../../lib/booking/records';
+import { PROVIDER_FAULT_STATUSES, type BookingPatch, type BookingRecord, type BookingRecords, type UpdateGuard } from '../../lib/booking/records';
 import { RepositoryError } from '../../lib/booking/repository';
 import type { EmailMessage, EmailSender } from '../../lib/email/types';
 
@@ -8,7 +8,7 @@ type Op = 'find' | 'update' | 'providerHistory';
 export class FakeRecords implements BookingRecords {
   rows: BookingRecord[] = [];
   calls: Op[] = [];
-  updates: Array<{ id: string; patch: BookingPatch; ifStatus?: readonly string[] }> = [];
+  updates: Array<{ id: string; patch: BookingPatch; guard?: UpdateGuard }> = [];
   failWhen: (op: Op) => boolean = () => false;
   /** Runs between a read and the update: where a racing request lands. */
   beforeUpdate: (() => void) | null = null;
@@ -37,12 +37,14 @@ export class FakeRecords implements BookingRecords {
     return r ? { ...r } : null;
   }
 
-  async update(id: string, patch: BookingPatch, ifStatus?: readonly string[]) {
+  async update(id: string, patch: BookingPatch, guard?: UpdateGuard) {
     this.check('update');
     this.beforeUpdate?.();
-    this.updates.push({ id, patch, ifStatus });
+    this.updates.push({ id, patch, guard });
     const r = this.get(id);
-    if (!r || (ifStatus && !ifStatus.includes(String(r.status)))) return null;
+    if (!r) return null;
+    if (guard?.status && !guard.status.includes(String(r.status))) return null;
+    if (guard && 'current_status' in guard && (r.current_status ?? null) !== guard.current_status) return null;
     Object.assign(r, patch);
     return { ...r };
   }

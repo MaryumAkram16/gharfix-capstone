@@ -13,8 +13,9 @@ GharFix books home-service providers (plumbers, electricians, AC technicians…)
 | `khadmat-intent` | WF1 (n8n + OpenAI) | `lib/intent/` (Gemini, keyword fallback) |
 | `khadmat-provider-match` | WF2 + WF3 (n8n + Google Maps) | `lib/matching/` (OpenStreetMap) |
 | `khadmat-booking` | WF4 (n8n + Gmail node) | `lib/booking/` (Supabase, Nodemailer) |
+| `khadmat-quality` | WF5 (n8n + Gmail node) | `lib/quality/` (Supabase, Nodemailer), §8 |
 | `khadmat-dispute` | WF6 (n8n + Gmail node) | `lib/dispute/` (Supabase, Nodemailer), §8 |
-| `khadmat-quality`, `-reschedule`, `-provider-dashboard` | WF5, WF7, WF8 | **not ported yet**: forwarded to n8n only if `N8N_WEBHOOK_BASE_URL` is set, otherwise they answer 503 |
+| `khadmat-reschedule`, `-provider-dashboard` | WF7, WF8 | **not ported yet**: forwarded to n8n only if `N8N_WEBHOOK_BASE_URL` is set, otherwise they answer 503 |
 
 ---
 
@@ -27,7 +28,7 @@ GharFix books home-service providers (plumbers, electricians, AC technicians…)
 5. [Intent parsing](#5-intent-parsing)
 6. [Provider matching, pricing and the limits of OpenStreetMap](#6-provider-matching-pricing-and-the-limits-of-openstreetmap)
 7. [Demo-data fallback](#7-demo-data-fallback)
-8. [After the booking: disputes](#8-after-the-booking-disputes)
+8. [After the booking: quality loop and disputes](#8-after-the-booking-quality-loop-and-disputes)
 9. [Self-healing: retries, incidents, alerts, reconcile](#9-self-healing-retries-incidents-alerts-reconcile)
 10. [Tests](#10-tests)
 11. [Known limitations](#11-known-limitations)
@@ -265,9 +266,26 @@ Off by default. With `USE_DEMO_PROVIDERS=1` (exactly `1`), matching falls back t
 
 ---
 
-## 8. After the booking: disputes
+## 8. After the booking: quality loop and disputes
 
-`khadmat-dispute` (WF6) is ported in `lib/dispute/`. The five rule sets (no-show, provider cancelled, quality complaint, price disagreement, overrun) keep n8n's thresholds and amounts; `tests/dispute/decide.test.ts` runs the original n8n Code nodes on the same inputs and compares the results.
+### Quality loop (`khadmat-quality`, WF5)
+
+Ported in `lib/quality/`. The stages en route → arrived → completed → feedback, with n8n's checklists, sentiment keywords, reputation formula, escalation rule and messages; `tests/quality/stages.test.ts` runs the original n8n Code nodes on the same inputs.
+
+**What changed, and why:**
+- **The state machine is enforced.** n8n's Trace Guard read the booking row, which has no `action` field, so it judged every request "invalid", and the merge after it let every request through anyway. Now the stages must come in order, each once; out of order is a 409 `blocked_invalid_state`; after feedback the booking answers `tracking_locked`. Reopening a stage (the tracking page reloaded) answers that stage again with `already_recorded: true`, without saving or emailing twice.
+- **No invented numbers.** n8n used a random 5–15 km distance (so a random ETA) when none was sent, and computed every provider's new rating from a fixed "4.1 over 28 reviews". Now: the distance and the rating/review count saved on the booking at booking time, or `null` when unknown.
+- **The browser cannot set the final price.** The tracking screen sends `final_price_pkr` at "completed"; it is ignored, since a customer could otherwise raise it and then dispute the difference. The final price shown is the one recorded on the booking, else the quote.
+- **Bad feedback escalates to WF6 in-process,** after the feedback is saved (n8n POSTed to its own host, which is gone). If the escalation fails, the feedback stays saved and the response says `escalation_failed: true`.
+- **The feedback screen now gets what it reads.** It reads `customer_message`, `escalate_to_wf6` and `reputation_update` at the top level, but n8n nested them under `feedback`; the port sends both.
+- **Images:** up to 3 JPEG/PNG/WebP data URLs are kept (n8n kept any string over 100 characters), and they are not echoed back in the response.
+- Times are Pakistan time (n8n: the server clock), an unknown service gets a generic checklist (n8n: the AC-repair one), and texts say GharFix.
+- Each stage is a compare-and-set on the booking's status and tracking position, and the same caller-email check as disputes applies.
+
+### Disputes (`khadmat-dispute`, WF6)
+
+
+Ported in `lib/dispute/`. The five rule sets (no-show, provider cancelled, quality complaint, price disagreement, overrun) keep n8n's thresholds and amounts; `tests/dispute/decide.test.ts` runs the original n8n Code nodes on the same inputs and compares the results.
 
 **What changed, and why:**
 - **Facts come from the booking row, not the request.** n8n refunded the `price_pkr` the browser sent and emailed the `user_email` the browser sent. The port reads price, final price, provider, date, slot and email from Supabase by `booking_id`. The request only carries the customer's claim (rating, review, extra charge, durations).
@@ -337,9 +355,10 @@ Every external dependency is faked in the unit tests: Supabase, Gemini, Nominati
 | Gemini client, validator, prompt-equals-n8n, keyword fallback, intent handler | `tests/intent/` |
 | Retries, policies, incidents, alerts, de-duplication, booking with resilience | `tests/resilience/` |
 | Dispute rules vs the original n8n code, dispute handler (ownership, compare-and-set, email) | `tests/dispute/` |
+| Quality-loop stages vs the original n8n code, state machine, feedback escalation | `tests/quality/` |
 | Reconciler, its auth, and the workflow file | `tests/reconcile/` |
 | Frontend helpers: booking response handling, keyword parser, transformer, Pakistan date | `tests/frontend/` |
-| Whole flows through `createApp()` with only HTTP faked | `tests/app.test.ts`, `tests/intent-flow.test.ts`, `tests/demo-flow.test.ts`, `tests/google-flow.test.ts`, `tests/dispute-flow.test.ts` |
+| Whole flows through `createApp()` with only HTTP faked | `tests/app.test.ts`, `tests/intent-flow.test.ts`, `tests/demo-flow.test.ts`, `tests/google-flow.test.ts`, `tests/dispute-flow.test.ts`, `tests/quality-flow.test.ts` |
 | `api/` loaded in plain Node ESM (no bundler), as Vercel runs it | `tests/api/esm.test.ts` |
 
 **Migrations against real Postgres.** These are skipped unless `TEST_DATABASE_URL` points at a **local** server; the helper refuses anything else. They create and drop their own throwaway database:
@@ -352,7 +371,7 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/postgres npx vitest run t
 
 **Verified live** (production Vercel logs, 2026-11-06): a chat message parsed by Gemini, providers found with Google Places around a Nominatim-geocoded location, a booking saved in Supabase, and its confirmation sent through Gmail SMTP.
 
-**Not verified yet:** Overpass from Vercel (it timed out in every logged request, so the demo fallback or Google covered it); disputes against the real database (tested with fakes only); a scheduled GitHub Actions run.
+**Not verified yet:** Overpass from Vercel (it timed out in every logged request, so the demo fallback or Google covered it); the quality loop and disputes against the real database (tested with fakes only); a scheduled GitHub Actions run.
 
 ---
 
@@ -364,8 +383,9 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/postgres npx vitest run t
 - **Google Places.** Needs a billing-enabled key; it has no on-time or cancellation history and review dates are not requested, so those stay null.
 - **OpenStreetMap data.** No ratings, reviews, prices or road distance (§6). Coverage of small Pakistani businesses varies widely by area, and the public endpoints are rate-limited.
 - **Keyword parser.** It is dictionary-based. Spellings it doesn't know are missed, and the fuzzy matcher is deliberately strict to avoid false services.
-- **No login.** Disputes check that the caller's email matches the booking's, but an email address is not a secret: anyone who knows both the booking id and the email can file a dispute.
-- **Unported workflows.** Quality loop, rescheduling and the provider dashboard still need n8n (503 without it). Their screens still check `response.ok` before reading the body.
+- **Tracking is simulated.** The customer's screen moves the booking through en route / arrived / completed; there is no provider app or live location. The screen still shows a generic connection error for a 409 (out of order) instead of the server's message.
+- **No login.** Tracking and disputes check that the caller's email matches the booking's, but an email address is not a secret: anyone who knows both the booking id and the email can file a dispute or move the tracking.
+- **Unported workflows.** Rescheduling and the provider dashboard still need n8n (503 without it). Their screens still check `response.ok` before reading the body.
 - **Scheduling.** GitHub may delay or skip scheduled runs, and the reconcile workflow only runs once it is on the default branch.
 - **Time limits.** The provider-matching functions have `maxDuration: 60`. A provider search is bounded by Nominatim (5 s) + Overpass (20 s across both instances) by default, plus Google Places (8 s) first when its key is set. If *every* dependency times out at once on the intent path (Gemini 8 s × 2, Nominatim 5 s, Google 8 s, Overpass 20 s, Supabase capacity 8 s × 3 tries) the total can pass 60 s and Vercel stops the function; lower the timeouts if that matters. Other functions (`api/booking.ts`, `api/reconcile.ts`) use the plan's default duration.
 
@@ -373,7 +393,7 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/postgres npx vitest run t
 
 ## 12. The original n8n design
 
-The JSON in `n8n-workflows/` is kept unchanged as the design record. WF1–WF4 and WF6 are ported; the rest are not yet:
+The JSON in `n8n-workflows/` is kept unchanged as the design record. WF1–WF6 are ported; the rest are not yet:
 
 | Workflow | Purpose |
 |---|---|

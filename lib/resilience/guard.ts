@@ -90,7 +90,7 @@ export function resilientRepository<R extends Repo>(repo: R, ctx: GuardContext):
 export function resilientRecords(records: BookingRecords, ctx: GuardContext): BookingRecords {
   return {
     find: (id) => guarded(ctx, 'supabase.findBooking', SUPABASE_READ, () => records.find(id)),
-    update: (id, patch, ifStatus) => guarded(ctx, 'supabase.updateBooking', NO_RETRY, () => records.update(id, patch, ifStatus), `booking ${id}`),
+    update: (id, patch, guard) => guarded(ctx, 'supabase.updateBooking', NO_RETRY, () => records.update(id, patch, guard), `booking ${id}`),
     providerHistory: (providerId) => guarded(ctx, 'supabase.providerHistory', SUPABASE_READ, () => records.providerHistory(providerId)),
   };
 }

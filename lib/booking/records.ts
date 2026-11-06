@@ -52,6 +52,21 @@ export interface BookingPatch {
   tracking_status?: string | null;
   current_status?: string | null;
   last_action?: string | null;
+  trace_key?: string | null;
+  tracking_locked?: boolean;
+  tracked_once?: boolean;
+  customer_transcript?: string | null;
+  images_attached?: string | null;
+  transcript_included?: string | null;
+  image_base64_data?: string | null;
+  provider_new_rating?: number | null;
+}
+
+/** Compare-and-set conditions: the update applies only while the row still has these values. */
+export interface UpdateGuard {
+  status?: readonly string[];
+  /** null means "still unset". */
+  current_status?: string | null;
 }
 
 export interface ProviderHistory {
@@ -64,11 +79,11 @@ export interface ProviderHistory {
 export interface BookingRecords {
   find(bookingId: string): Promise<BookingRecord | null>;
   /**
-   * Update one booking. With `ifStatus`, only while its status is still one of
-   * those (a compare-and-set, so two requests cannot both move it). Returns
+   * Update one booking. With a guard, only while the row still has those
+   * values (a compare-and-set, so two requests cannot both move it). Returns
    * the updated row, or null when no row matched.
    */
-  update(bookingId: string, patch: BookingPatch, ifStatus?: readonly string[]): Promise<BookingRecord | null>;
+  update(bookingId: string, patch: BookingPatch, guard?: UpdateGuard): Promise<BookingRecord | null>;
   providerHistory(providerId: string): Promise<ProviderHistory>;
 }
 
@@ -90,9 +105,10 @@ export function createBookingRecords(rest: SupabaseRest): BookingRecords {
       return rows(await rest.request('bookings', 'GET', params))[0] ?? null;
     },
 
-    async update(bookingId, patch, ifStatus) {
+    async update(bookingId, patch, guard) {
       const params = new URLSearchParams({ booking_id: `eq.${bookingId}` });
-      if (ifStatus) params.set('status', quote(ifStatus));
+      if (guard?.status) params.set('status', quote(guard.status));
+      if (guard && 'current_status' in guard) params.set('current_status', guard.current_status === null ? 'is.null' : `eq.${guard.current_status}`);
       const result = rows(await rest.request('bookings', 'PATCH', params, patch, { Prefer: 'return=representation' }));
       return result[0] ?? null;
     },

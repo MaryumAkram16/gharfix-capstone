@@ -91,7 +91,7 @@ export async function handleDisputeRequest(body: Record<string, unknown>, deps: 
     const updated = await deps.records.update(
       bookingId,
       { status: target, previous_status: row.status, flagged_for_review: true, updated_at: deps.now().toISOString() },
-      row.status === null ? undefined : [row.status],
+      row.status === null ? undefined : { status: [row.status] },
     );
     if (!updated) {
       log.warn('dispute.status_changed_meanwhile', { read_status: row.status });

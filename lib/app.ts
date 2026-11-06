@@ -2,7 +2,7 @@ import { createBookingRoute, type Env, type FetchLike } from './booking/deps.js'
 import type { EmailSender } from './email/types.js';
 import type { HttpResult } from './http/errors.js';
 import { createN8nForwarder, routeProxy, type LocalHandler, type RouteMeta } from './http/proxy.js';
-import { createDisputeRoute } from './dispute/deps.js';
+import { createDisputeRoute, createQualityRoute } from './dispute/deps.js';
 import { createIntentRoute } from './intent/deps.js';
 import { emailSenderFromEnv } from './email/index.js';
 import { createLogger, type LogSink } from './log.js';
@@ -44,8 +44,9 @@ export function createApp({ env = process.env, fetch, email, logSink, reconcileD
   const forward = n8nBase ? createN8nForwarder({ baseUrl: n8nBase, fetch, log: log.child({ fn: 'proxy' }) }) : null;
 
   const dispute = createDisputeRoute({ env, fetch, email: mailer, recorder, log: log.child({ fn: 'khadmat-dispute' }) });
+  const quality = createQualityRoute({ env, fetch, email: mailer, recorder, log: log.child({ fn: 'khadmat-quality' }) });
 
-  const local = { 'khadmat-booking': booking, 'khadmat-intent': intent, 'khadmat-provider-match': providerMatch, 'khadmat-dispute': dispute };
+  const local = { 'khadmat-booking': booking, 'khadmat-intent': intent, 'khadmat-provider-match': providerMatch, 'khadmat-dispute': dispute, 'khadmat-quality': quality };
   const reconcile = createReconcileRunner({ env, fetch, email: mailer, recorder, deliverable: reconcileDeliverable, log: log.child({ fn: 'reconcile' }) });
   return {
     booking,

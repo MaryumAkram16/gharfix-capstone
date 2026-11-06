@@ -22,7 +22,7 @@ describe('khadmat-dispute', () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ status: 'dispute_resolved', dispute_type: 'quality_complaint', workflow: 'WF6-QualityComplaint', email: 'sent' });
     expect(db.get('BK-TEST-1')).toMatchObject({ status: 'disputed', previous_status: 'confirmed', flagged_for_review: true, updated_at: NOW.toISOString() });
-    expect(db.updates[0].ifStatus).toEqual(['confirmed']);
+    expect(db.updates[0].guard).toEqual({ status: ['confirmed'] });
     expect(mail.sent).toHaveLength(1);
     expect(mail.sent[0]).toMatchObject({ to: 'customer@example.test', subject: 'Dispute Update - Booking BK-TEST-1' });
   });

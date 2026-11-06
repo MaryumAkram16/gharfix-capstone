@@ -7,6 +7,7 @@ import type { LocalHandler } from '../http/proxy.js';
 import type { Logger } from '../log.js';
 import { resilientEmail, resilientRecords, type IncidentRecorder } from '../resilience/index.js';
 import { errorClass, payloadHash } from '../resilience/incidents.js';
+import { handleQualityRequest } from '../quality/handler.js';
 import { handleDisputeRequest } from './handler.js';
 
 export interface RecordsRouteOptions {
@@ -55,4 +56,12 @@ export function createRecordsRoute(
 
 export function createDisputeRoute(opts: RecordsRouteOptions): LocalHandler {
   return createRecordsRoute('khadmat-dispute', opts, (body, deps) => handleDisputeRequest(body, { ...deps, now: () => new Date() }));
+}
+
+/** khadmat-quality (WF5). Escalations go to WF6 in-process, with the same records, email and incident context. */
+export function createQualityRoute(opts: RecordsRouteOptions): LocalHandler {
+  return createRecordsRoute('khadmat-quality', opts, (body, deps) => {
+    const now = () => new Date();
+    return handleQualityRequest(body, { ...deps, now, escalate: (b) => handleDisputeRequest(b, { ...deps, now, log: deps.log.child({ escalated_from: 'khadmat-quality' }) }) });
+  });
 }
