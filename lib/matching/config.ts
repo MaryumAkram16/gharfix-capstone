@@ -1,9 +1,17 @@
 import type { Logger } from '../log.js';
-import { DEFAULT_NOMINATIM_URL, DEFAULT_OVERPASS_FALLBACK_URL, DEFAULT_OVERPASS_URL, DEFAULT_USER_AGENT } from './osm.js';
+import {
+  DEFAULT_NOMINATIM_TIMEOUT_MS, DEFAULT_NOMINATIM_URL, DEFAULT_OVERPASS_BUDGET_MS, DEFAULT_OVERPASS_FALLBACK_URL,
+  DEFAULT_OVERPASS_TIMEOUT_MS, DEFAULT_OVERPASS_URL, DEFAULT_USER_AGENT,
+} from './osm.js';
 
-// OpenStreetMap endpoints and timeouts from env vars. Defaults keep a
-// provider search well inside a serverless time limit:
-//   Nominatim 5 s + Overpass 8 s per instance, 12 s across both instances.
+// OpenStreetMap endpoints and timeouts from env vars; none of them is
+// required. Defaults:
+//   Nominatim 5 s + Overpass 15 s per instance, 20 s across both instances
+// so a provider search ends within about 25 s, inside the 60 s maxDuration
+// set on the functions that run it (api/proxy.ts, api/intent.ts,
+// api/provider-match.ts). The public Overpass servers are slow under load,
+// which is why the per-instance default is generous; the 20 s budget still
+// leaves the mirror at least 5 s after a full main-instance timeout.
 // Invalid values fall back to the default with a warning, never a crash.
 
 type Env = Record<string, string | undefined>;
@@ -19,9 +27,9 @@ export interface OsmConfig {
 }
 
 export const OSM_DEFAULTS = {
-  nominatimTimeoutMs: 5000,
-  overpassTimeoutMs: 8000,
-  overpassBudgetMs: 12000,
+  nominatimTimeoutMs: DEFAULT_NOMINATIM_TIMEOUT_MS,
+  overpassTimeoutMs: DEFAULT_OVERPASS_TIMEOUT_MS,
+  overpassBudgetMs: DEFAULT_OVERPASS_BUDGET_MS,
 } as const;
 
 const MIN_MS = 1000;
