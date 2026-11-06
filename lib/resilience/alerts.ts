@@ -43,8 +43,9 @@ export function adviceFor(incident: Pick<Incident, 'step' | 'error_class'>): str
     return 'The public OpenStreetMap servers were slow or unreachable (the Overpass mirror was tried too). Nothing to do if it recovers. If it keeps happening: raise OVERPASS_TIMEOUT_MS / NOMINATIM_TIMEOUT_MS, or point OVERPASS_URL / OVERPASS_FALLBACK_URL / NOMINATIM_URL at your own or a commercial instance. With USE_DEMO_PROVIDERS=1, customers were shown labelled demo providers meanwhile; otherwise they were asked to try again.';
   }
   if (step === 'gemini.parse') {
-    if (e.includes(':config')) return 'Gemini rejected the request (bad key or model name). Check GEMINI_API_KEY and GEMINI_MODEL. A 403 usually means the key is not allowed to use the Generative Language API: use a key from aistudio.google.com/apikey, not the Maps key (GOOGLE_MAPS_API_KEY is separate), with no website/IP restriction, then redeploy. Until then customers are served by the keyword parser.';
+    if (e.includes(':config')) return 'Gemini rejected the request (bad key or model name). Check GEMINI_API_KEY and GEMINI_MODEL. A 400 can mean the model does not accept GEMINI_THINKING_LEVEL: set it to off. A 403 usually means the key is not allowed to use the Generative Language API: use a key from aistudio.google.com/apikey, not the Maps key (GOOGLE_MAPS_API_KEY is separate), with no website/IP restriction, then redeploy. Until then customers are served by the keyword parser.';
     if (e.includes(':invalid_output')) return 'Gemini answered with output that failed validation, so the keyword parser was used. If this repeats, try another GEMINI_MODEL.';
+    if (e.includes(':timeout')) return 'Gemini did not answer within GEMINI_TIMEOUT_MS (default 8000), so the keyword parser was used. If this repeats: keep GEMINI_THINKING_LEVEL at low or minimal (higher levels are slower), or raise GEMINI_TIMEOUT_MS to 12000.';
     return 'Gemini was unavailable or rate-limited, so the keyword parser was used. If this repeats, check the Gemini quota in Google AI Studio.';
   }
   if (step === 'smtp.send') {
