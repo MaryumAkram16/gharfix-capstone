@@ -3,7 +3,8 @@ import type { BookingRecords } from '../booking/records.js';
 import type { CapacityReader, ReconcileReader, BookingRepository } from '../booking/repository.js';
 import type { EmailSender } from '../email/types.js';
 import type { IntentParser } from '../intent/types.js';
-import type { Geocoder, ProviderDirectory } from '../matching/directory.js';
+import type { Logger } from '../log.js';
+import { MapsUnavailableError, type Geocoder, type ProviderDirectory } from '../matching/directory.js';
 import { errorClass, payloadHash } from './incidents.js';
 import { GEMINI, NO_RETRY, SUPABASE_READ, describePolicy, insertPolicy, isExpectedOutcome, isTransient } from './policies.js';
 import type { IncidentRecorder } from './recorder.js';
@@ -24,6 +25,8 @@ export interface GuardContext {
   sleep?: (ms: number) => Promise<void>;
 }
 
+const RETRY_SUCCEEDED = 'A retry succeeded.';
+
 export async function guarded<T>(ctx: GuardContext, step: string, policy: RetryPolicy, fn: () => Promise<T>, detail?: string): Promise<T> {
   let report: RetryReport | null = null;
   let value: T;
@@ -33,7 +36,7 @@ export async function guarded<T>(ctx: GuardContext, step: string, policy: RetryP
     const r = report as RetryReport | null;
     const first = r?.errors[0] ?? err;
     if (isExpectedOutcome(err)) {
-      if (r && r.attempts > 1) await record(ctx, step, first, true, true, describePolicy(policy, r.attempts, r.waits), detail);
+      if (r && r.attempts > 1) await record(ctx, step, first, true, true, `${describePolicy(policy, r.attempts, r.waits)} ${RETRY_SUCCEEDED}`, detail);
       throw err;
     }
     await record(ctx, step, err, isTransient(err), false, describePolicy(policy, r?.attempts ?? 1, r?.waits ?? []), detail ?? errMessage(err));
@@ -41,7 +44,7 @@ export async function guarded<T>(ctx: GuardContext, step: string, policy: RetryP
   }
   const r = report as RetryReport | null;
   if (r && r.attempts > 1) {
-    await record(ctx, step, r.errors[0], true, true, describePolicy(policy, r.attempts, r.waits), detail);
+    await record(ctx, step, r.errors[0], true, true, `${describePolicy(policy, r.attempts, r.waits)} ${RETRY_SUCCEEDED}`, detail);
   }
   return value;
 }
@@ -62,7 +65,7 @@ async function record(ctx: GuardContext, step: string, err: unknown, retryable: 
       request_id: ctx.requestId,
       payload_hash: payloadHash(ctx.workflow, step, cls),
     },
-    { tried: autoFixed ? `${tried} A retry succeeded.` : tried, detail },
+    { tried, detail },
   );
 }
 
@@ -113,6 +116,73 @@ export function resilientCapacity(capacity: CapacityReader, ctx: GuardContext): 
 /** OpenStreetMap: not retried here (the directory already tries a mirror), but every final failure is an incident. */
 export function resilientDirectory(directory: ProviderDirectory, ctx: GuardContext, step: 'osm.searchNearby' | 'google.searchText' = 'osm.searchNearby'): ProviderDirectory {
   return { searchNearby: (search) => guarded(ctx, step, NO_RETRY, () => directory.searchNearby(search)) };
+}
+
+/** HTTP answers that mean a person must act (bad key, billing off, API not enabled): never cleared by a fallback. */
+const NEEDS_A_PERSON = [400, 401, 403, 404];
+
+function needsAPerson(err: unknown): boolean {
+  return err instanceof MapsUnavailableError && err.httpStatus !== null && NEEDS_A_PERSON.includes(err.httpStatus);
+}
+
+/** Temporary: a timeout, network error, 429 or 5xx, which goes away by itself. */
+function isTemporary(err: unknown): boolean {
+  return isTransient(err) && !needsAPerson(err);
+}
+
+/**
+ * The primary directory, with `fallback` asked when it throws. Exactly one
+ * incident per primary failure (pass the RAW primary, not one wrapped by
+ * resilientDirectory), and it says whether the customer was covered:
+ *   - fallback throws: auto_fixed false, the fallback's error is rethrown
+ *     (its own resilient wrapper records that failure)
+ *   - fallback finds providers and the primary error was temporary:
+ *     auto_fixed true, so no alert
+ *   - fallback finds providers but the primary error needs a person
+ *     (400/401/403/404): auto_fixed false and retryable false, so the
+ *     alert still goes out: customers were served, the cause stays
+ *   - fallback finds nothing: auto_fixed false
+ * Demo providers are never a fix: keep withDemoFallback outside this.
+ */
+export function recoveringDirectory(
+  primary: ProviderDirectory,
+  fallback: ProviderDirectory,
+  ctx: GuardContext,
+  step: string,
+  recoveryName: string,
+  log?: Logger,
+): ProviderDirectory {
+  return {
+    async searchNearby(search) {
+      let primaryError: unknown;
+      try {
+        return await primary.searchNearby(search);
+      } catch (err) {
+        primaryError = err;
+      }
+      log?.warn('match.directory_fallback_used', { services: search.services, error: primaryError });
+      const detail = errMessage(primaryError);
+      const temporary = isTemporary(primaryError);
+
+      let places: Awaited<ReturnType<ProviderDirectory['searchNearby']>>;
+      try {
+        places = await fallback.searchNearby(search);
+      } catch (fallbackError) {
+        await record(ctx, step, primaryError, temporary, false, `Not retried; ${recoveryName} was tried instead and failed too, so the customer was not served from either.`, detail);
+        throw fallbackError;
+      }
+
+      if (places.length === 0) {
+        await record(ctx, step, primaryError, temporary, false, `Not retried; ${recoveryName} was tried instead but found no providers.`, detail);
+      } else if (temporary) {
+        await record(ctx, step, primaryError, true, true, `Not retried; ${recoveryName} was used instead and served the customer (${places.length} provider(s)).`, detail);
+      } else {
+        await record(ctx, step, primaryError, false, false,
+          `Not retried; ${recoveryName} was used instead and served the customer (${places.length} provider(s)), but this error will not clear by itself: it needs a person.`, detail);
+      }
+      return places;
+    },
+  };
 }
 
 export function resilientGeocoder(geocoder: Geocoder, ctx: GuardContext): Geocoder {

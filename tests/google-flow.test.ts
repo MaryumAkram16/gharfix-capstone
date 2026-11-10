@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../lib/app';
 import { GOOGLE_NOTE, NO_PROVIDERS_TEXT, OSM_NOTE } from '../lib/matching/handler';
+import type { EmailMessage } from '../lib/email/types';
 import type { LogRecord } from '../lib/log';
 import { adviceFor } from '../lib/resilience/alerts';
 import { transformMatchData } from '../src/lib/transformer';
@@ -42,8 +43,14 @@ const match = { endpoint: 'khadmat-provider-match', services: ['plumber'], servi
 async function run(google: Mode | 403, overpass: Mode, env: Record<string, string> = { GOOGLE_MAPS_API_KEY: KEY }) {
   const net = fakeInternet(google, overpass);
   const logs: LogRecord[] = [];
-  const res = await createApp({ env, fetch: net.fetch, logSink: (r) => logs.push(r) }).proxy(match, { requestId: null });
-  return { res, body: res.body as any, logs, hosts: net.hosts };
+  // Alerts go to ALERT_EMAIL through this sender, so a test can see whether one went out.
+  const alerts: EmailMessage[] = [];
+  const email = { send: async (m: EmailMessage) => { alerts.push(m); } };
+  const res = await createApp({ env: { ALERT_EMAIL: 'owner@example.test', ...env }, fetch: net.fetch, email, logSink: (r) => logs.push(r) }).proxy(match, { requestId: null });
+  // This env has no Supabase, so the capacity read records (and alerts) its own incident: look at Google's only.
+  const googleIncidents = logs.filter((r) => r.event === 'incident.recorded' && r.step === 'google.searchText');
+  const googleAlerts = alerts.filter((m) => m.subject.includes('Google Places'));
+  return { res, body: res.body as any, logs, hosts: net.hosts, googleIncidents, googleAlerts };
 }
 
 describe('khadmat-provider-match with GOOGLE_MAPS_API_KEY', () => {
@@ -64,16 +71,49 @@ describe('khadmat-provider-match with GOOGLE_MAPS_API_KEY', () => {
     expect(ui.top_provider_card).toMatchObject({ rating: 4.7, source: 'google_places' });
   });
 
-  it.each([[403], ['down']] as const)('Google %s: records an incident, then answers from OpenStreetMap', async (mode) => {
-    const { res, body, hosts, logs } = await run(mode, 'results');
+  it.each([
+    // 403: bad key / billing / API not enabled. OpenStreetMap served the customer, but this needs a person: alert.
+    [403, { auto_fixed: false, retryable: false, alerts: 1 }],
+    // 503: temporary. OpenStreetMap served the customer and it clears by itself: fixed, no alert.
+    ['down', { auto_fixed: true, retryable: true, alerts: 0 }],
+  ] as const)('Google %s: answers from OpenStreetMap, one incident, auto_fixed per cause', async (mode, expected) => {
+    const { res, body, hosts, logs, googleIncidents, googleAlerts: alerts } = await run(mode, 'results');
     expect(res.status).toBe(200);
     expect(hosts).toContain('overpass-api.de');
     expect(body.data_source).toBe('openstreetmap');
     expect(body.data_notes.note).toBe(OSM_NOTE);
     expect(body.services[0].provider).toMatchObject({ name: 'OSM G-13 Plumbers', rating: null });
-    expect(logs.find((r) => r.event === 'incident.recorded')).toMatchObject({ step: 'google.searchText', auto_fixed: false });
+    expect(googleIncidents).toEqual([expect.objectContaining({ auto_fixed: expected.auto_fixed, retryable: expected.retryable })]);
+    expect(alerts).toHaveLength(expected.alerts);
+    if (expected.alerts) expect(alerts[0].text).toContain('will not clear by itself');
     expect(logs.map((r) => r.event)).toContain('match.directory_fallback_used');
     expect(JSON.stringify(logs)).not.toContain(KEY);
+    expect(JSON.stringify(alerts)).not.toContain(KEY);
+  });
+
+  it('GOOGLE_PLACES_FAULT=503 makes Google fail on purpose: OpenStreetMap serves, auto_fixed, no alert, no Google call', async () => {
+    const { res, body, hosts, logs, googleIncidents, googleAlerts } = await run('results', 'results', { GOOGLE_MAPS_API_KEY: KEY, GOOGLE_PLACES_FAULT: '503' });
+    expect(res.status).toBe(200);
+    expect(body.data_source).toBe('openstreetmap');
+    expect(hosts).not.toContain('places.googleapis.com');
+    expect(logs.find((r) => r.event === 'google.fault_injected')).toMatchObject({ level: 'warn', fault: '503' });
+    expect(googleIncidents).toEqual([expect.objectContaining({ error_class: 'MapsUnavailableError:directory:503', auto_fixed: true, retryable: true })]);
+    expect(googleAlerts).toEqual([]);
+  });
+
+  it('GOOGLE_PLACES_FAULT=timeout is recorded as a timeout, also fixed by OpenStreetMap', async () => {
+    const { body, googleIncidents, googleAlerts } = await run('results', 'results', { GOOGLE_MAPS_API_KEY: KEY, GOOGLE_PLACES_FAULT: 'timeout' });
+    expect(body.data_source).toBe('openstreetmap');
+    expect(googleIncidents).toEqual([expect.objectContaining({ error_class: 'MapsUnavailableError:directory:timeout', auto_fixed: true })]);
+    expect(googleAlerts).toEqual([]);
+  });
+
+  it.each([['true'], ['TIMEOUT'], [' 503'], ['500'], ['']])('GOOGLE_PLACES_FAULT=%j does nothing: Google answers as normal', async (fault) => {
+    const { body, hosts, logs, googleIncidents } = await run('results', 'results', { GOOGLE_MAPS_API_KEY: KEY, GOOGLE_PLACES_FAULT: fault });
+    expect(body.data_source).toBe('google_places');
+    expect(hosts).toContain('places.googleapis.com');
+    expect(logs.map((r) => r.event)).not.toContain('google.fault_injected');
+    expect(googleIncidents).toEqual([]);
   });
 
   it('Google answers zero places: that is the answer (no OpenStreetMap call)', async () => {

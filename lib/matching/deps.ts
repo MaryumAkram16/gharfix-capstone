@@ -2,9 +2,9 @@ import type { Env, FetchLike } from '../booking/deps.js';
 import { createSupabaseRepository, supabaseConfigFromEnv, type CapacityReader } from '../booking/repository.js';
 import type { LocalHandler } from '../http/proxy.js';
 import type { Logger } from '../log.js';
-import { resilientCapacity, resilientDirectory, resilientGeocoder, type IncidentRecorder } from '../resilience/index.js';
+import { recoveringDirectory, resilientCapacity, resilientDirectory, resilientGeocoder, type IncidentRecorder } from '../resilience/index.js';
 import { googleConfigFromEnv, osmConfigFromEnv } from './config.js';
-import { withDirectoryFallback, type ProviderDirectory } from './directory.js';
+import { MapsUnavailableError, withDirectoryFallback, type ProviderDirectory } from './directory.js';
 import { createGooglePlacesDirectory } from './google.js';
 import { createDemoDirectory, withDemoFallback } from './demo.js';
 import { handleProviderMatch, type MatchDeps } from './handler.js';
@@ -26,6 +26,23 @@ interface MatchParts {
   demo: ProviderDirectory | null;
 }
 
+/**
+ * GOOGLE_PLACES_FAULT=timeout | 503: make every Google Places search fail
+ * that way, to show the fallback and incident flow in a demo. Exactly those
+ * two values; anything else (or unset) changes nothing. Never in production.
+ */
+export function withFaultInjection(directory: ProviderDirectory, fault: string | undefined, log: Logger): ProviderDirectory {
+  if (fault !== 'timeout' && fault !== '503') return directory;
+  return {
+    async searchNearby() {
+      log.warn('google.fault_injected', { fault, variable: 'GOOGLE_PLACES_FAULT' });
+      throw fault === 'timeout'
+        ? new MapsUnavailableError('directory', 'google places timed out (fault injected by GOOGLE_PLACES_FAULT)', null, true)
+        : new MapsUnavailableError('directory', 'google places answered HTTP 503 (fault injected by GOOGLE_PLACES_FAULT)', 503);
+    },
+  };
+}
+
 function buildMatchParts({ env, log, fetch }: MatchDepsOptions): MatchParts {
   const config = osmConfigFromEnv(env, log);
   const osm = { fetch, log, userAgent: config.userAgent };
@@ -38,7 +55,7 @@ function buildMatchParts({ env, log, fetch }: MatchDepsOptions): MatchParts {
   }
   const overpass = createOverpassDirectory(config.overpassUrls, { ...osm, timeoutMs: config.overpassTimeoutMs, budgetMs: config.overpassBudgetMs });
   const googleConfig = googleConfigFromEnv(env, log);
-  const google = googleConfig ? createGooglePlacesDirectory({ ...googleConfig, fetch, log }) : null;
+  const google = googleConfig ? withFaultInjection(createGooglePlacesDirectory({ ...googleConfig, fetch, log }), env.GOOGLE_PLACES_FAULT, log) : null;
   if (google) log.info('match.google_places_enabled', { fallback: 'OpenStreetMap when Google fails' });
   const real = google ? withDirectoryFallback(google, overpass, log) : overpass;
   // Off unless exactly "1": demo providers are fictional and must never appear by accident.
@@ -82,7 +99,9 @@ export function createMatchRoute(opts: MatchDepsOptions): LocalHandler {
     if (!opts.recorder) return handleProviderMatch(body, { ...deps, log });
     const ctx = { workflow: 'khadmat-provider-match', requestId: meta.requestId, recorder: opts.recorder };
     const osmDirectory = resilientDirectory(overpass, ctx);
-    const directory = google ? withDirectoryFallback(resilientDirectory(google, ctx, 'google.searchText'), osmDirectory, log) : osmDirectory;
+    // One incident per Google failure, auto_fixed when OpenStreetMap served the customer and the
+    // error was temporary. The demo fallback stays outside: demo data never counts as a fix.
+    const directory = google ? recoveringDirectory(google, osmDirectory, ctx, 'google.searchText', 'OpenStreetMap', log) : osmDirectory;
     return handleProviderMatch(body, {
       ...deps,
       log,
