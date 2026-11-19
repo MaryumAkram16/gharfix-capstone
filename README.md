@@ -2,6 +2,8 @@
 
 > Originally built for submission to the AI Seekho Antigravity Hackathon.
 
+**Live app:** https://gharfix-capstone-bvq8.vercel.app/ · **Demo:** https://www.loom.com/share/ced16dc728b04e53920382d191875de5
+
 > **Stack today:** React + Vite (frontend) · Vercel serverless functions in TypeScript (`api/`, `lib/`) · Supabase Postgres via PostgREST · Gemini (intent parsing) · OpenStreetMap Nominatim + Overpass (geocoding, provider search) · Gmail SMTP via Nodemailer · GitHub Actions (schedule) · Vitest
 
 GharFix books home-service providers (plumbers, electricians, AC technicians…) in Pakistan from a chat message in **English, Urdu or Roman Urdu**. It was first built as eight n8n workflows. The n8n host is gone, so the core flow (understand the request → find and rank providers → price → book) has been ported to tested serverless TypeScript. The n8n workflow JSON stays in [`n8n-workflows/`](n8n-workflows/) as the design record.
@@ -80,7 +82,11 @@ api/proxy.ts ──► lib/http/proxy.ts  routes by endpoint (allow-list of 7)
    │               │     → provider schema → 7-factor score → price
    │               ├─ khadmat-booking         → lib/booking/handler.ts
    │               │     get_slots | confirm → Supabase (PostgREST) → Gmail SMTP
-   │               └─ others                  → n8n if configured, else 503
+   │               ├─ khadmat-quality         → lib/quality/
+   │               ├─ khadmat-dispute         → lib/dispute/
+   │               ├─ khadmat-reschedule      → lib/reschedule/ (books in-process)
+   │               └─ khadmat-provider-dashboard → lib/dashboard/
+   │               (all 7 run in-process; the optional n8n forwarder in lib/http/proxy.ts is no longer reached)
    │
 api/booking.ts, api/intent.ts, api/provider-match.ts   same handlers, called directly
 api/reconcile.ts  ◄── .github/workflows/reconcile.yml every 15 min (bearer CRON_SECRET)
@@ -135,7 +141,7 @@ All routes are wired in one place, `lib/app.ts` (`createApp()`), used by both th
 - Apply the migrations **before** deploying code that uses them.
 - For the 15-minute reconcile, add the repository secrets `RECONCILE_URL` (e.g. `https://<app>.vercel.app/api/reconcile`) and `CRON_SECRET`. For the nightly provider scores, also `PROVIDER_SCORES_URL` (e.g. `https://<app>.vercel.app/api/provider-scores`). Scheduled workflows only run from the default branch.
 
-Not yet done: a deployment to Vercel has not been made from this branch.
+Deployed: the app runs on Vercel at https://gharfix-capstone-bvq8.vercel.app/.
 
 ---
 
