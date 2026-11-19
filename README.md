@@ -59,7 +59,7 @@ Every endpoint now runs in-process; `N8N_WEBHOOK_BASE_URL` is no longer used for
 **Changed on purpose**, each covered by tests:
 - Slots are normalised to 24h `HH:MM` everywhere ("4:00 PM" and "16:00" are the same slot).
 - WF4's simulated "offline" slots and WF2's invented ratings and reviews are gone.
-- Double booking is stopped by a database unique index, not only by a pre-check (§4).
+- Double booking is stopped by a database unique index and an exclusion constraint on overlapping windows, not only by a pre-check (§4).
 - Confirm requests are idempotent (§4).
 - Surge pricing uses the Pakistan hour, not the server's UTC clock.
 - Booking dates are Pakistan dates (the frontend used the UTC date, so between 00:00 and 04:59 PKT it sent yesterday).
@@ -106,7 +106,7 @@ All routes are wired in one place, `lib/app.ts` (`createApp()`), used by both th
 | `lib/resilience/` | retry, policies, incidents, alert email, recorder |
 | `lib/reconcile/` | re-send unsent confirmations |
 | `lib/http/`, `lib/log.ts` | HTTP results, proxy router, JSON logger (secrets redacted, emails masked) |
-| `db/` | original schema files (unchanged) + numbered migrations `001_*`, `002_*` with rollbacks |
+| `db/` | original schema files (unchanged) + numbered migrations `001_*`, `002_*`, `003_*` with rollbacks |
 | `db/seed/demo_providers.json` | fictional demo providers (§7) |
 | `n8n-workflows/` | the original workflows (design record, not executed) |
 | `tests/` | Vitest suites (§10) |
@@ -132,6 +132,8 @@ All routes are wired in one place, `lib/app.ts` (`createApp()`), used by both th
    2. `db/001_booking_integrity_check.sql`: read-only, must return zero rows.
    3. `db/001_booking_integrity.sql`
    4. `db/002_incidents.sql`
+   5. `db/003_booking_overlap_check.sql`: read-only, must return zero rows.
+   6. `db/003_booking_overlap.sql` (enables the `btree_gist` extension if it isn't already)
 
    Each migration runs in one transaction and can be rerun; `db/00x_rollback.sql` undoes it.
 4. `npm run dev` serves the app and `/api/*` on port 3000 (`server.ts` runs the same `createApp()` as Vercel).
@@ -161,21 +163,24 @@ Deployed: the app runs on Vercel at https://gharfix-capstone-bvq8.vercel.app/.
 
 1. **Normalised slots.** `normaliseSlot()` (`lib/booking/slot.ts`) and its SQL twin `normalize_slot()` turn every format into `HH:MM`. A test runs about 200 inputs through both and requires identical results, including Unicode digits and spaces. The SQL never raises.
 2. **Pre-check** with WF4's rules: service duration + 30 min travel buffer, and both "inside an earlier booking" and "would run into the next one". This gives the friendly 409 in the common case.
-3. **Unique index** `bookings_active_slot_key` on `(provider_id, booking_date, normalize_slot(slot))` for confirmed/in-progress rows (`db/001`). This is what makes two simultaneous requests safe: Postgres error 23505 on that index becomes a 409. It is tested with an in-memory fake that enforces the same rule, and against real Postgres 16.
+3. **Unique index** `bookings_active_slot_key` on `(provider_id, booking_date, normalize_slot(slot))` for confirmed/in-progress rows (`db/001`). Two simultaneous requests for the same start time: Postgres error 23505 on that index becomes a 409. It is tested with an in-memory fake that enforces the same rule, and against real Postgres 16.
+4. **Exclusion constraint** `bookings_no_overlap` (`db/003`). Each active booking occupies `booking_window(booking_date, slot, service_type)`: its start time plus the service duration plus the 30-minute travel buffer, with the same durations as `serviceBlock()` (a test compares them). Postgres refuses two active bookings for one provider whose windows overlap, so simultaneous requests for 16:00 and 16:30 can't both succeed. Error 23P01 becomes the same 409 `slot_taken`. Tested against real Postgres 16, including two concurrent transactions where exactly one wins.
+
+   The database uses each booking's own window, so it can be stricter than the pre-check: the pre-check measures a clash with the *requested* service's length, the constraint with each booking's actual length. A long job already booked at 09:00 (solar, 5 h 30 min with buffer) blocks a short job at 11:00 even if the pre-check let it through; that request gets the 409 instead.
 
 **How retries are made safe**
 
-4. **Idempotency.** The booking screen sends an `idempotency_key` (`crypto.randomUUID()`) and a request fingerprint is stored next to it.
+5. **Idempotency.** The booking screen sends an `idempotency_key` (`crypto.randomUUID()`) and a request fingerprint is stored next to it.
    - Same key and same request: the original receipt is replayed. One row, one email.
    - Same key, different request: 422.
    - Two concurrent requests with the same key: the unique index `bookings_idempotency_key_key` turns the loser into a replay.
-5. **Retry after an unclear failure.** If the insert times out after it actually committed, the keyed insert is retried. The retry hits a unique index, a second `booking_id` collision path tries once more with a new id, and the result is a replay of the original booking. The test checks exactly one row and the same booking id.
-6. **Try again in the UI** resends the byte-identical request with the same key, so a retry after a timeout replays instead of booking twice. This was checked in a real browser (Playwright): the same key appears on both requests and the booking is saved once.
+6. **Retry after an unclear failure.** If the insert times out after it actually committed, the keyed insert is retried. The retry hits a unique index, a second `booking_id` collision path tries once more with a new id, and the result is a replay of the original booking. The test checks exactly one row and the same booking id.
+7. **Try again in the UI** resends the byte-identical request with the same key, so a retry after a timeout replays instead of booking twice. This was checked in a real browser (Playwright): the same key appears on both requests and the booking is saved once.
 
 **How confirmation emails are made reliable**
 
-7. **Email never breaks a booking.** The confirm waits at most 5 s for SMTP. A failure is logged and recorded as an incident; the booking still returns 200.
-8. **`confirmation_sent_at`** (`db/002`) is set only when SMTP accepted the message: not for the console fallback, not on failure. `api/reconcile.ts` re-sends the rest (§9).
+8. **Email never breaks a booking.** The confirm waits at most 5 s for SMTP. A failure is logged and recorded as an incident; the booking still returns 200.
+9. **`confirmation_sent_at`** (`db/002`) is set only when SMTP accepted the message: not for the console fallback, not on failure. `api/reconcile.ts` re-sends the rest (§9).
 
 ---
 
@@ -404,7 +409,9 @@ Every external dependency is faked in the unit tests: Supabase, Gemini, Nominati
 | Whole flows through `createApp()` with only HTTP faked | `tests/app.test.ts`, `tests/intent-flow.test.ts`, `tests/demo-flow.test.ts`, `tests/google-flow.test.ts`, `tests/dispute-flow.test.ts`, `tests/quality-flow.test.ts`, `tests/reschedule-flow.test.ts`, `tests/dashboard-flow.test.ts` |
 | `api/` loaded in plain Node ESM (no bundler), as Vercel runs it | `tests/api/esm.test.ts` |
 
-**Migrations against real Postgres.** These are skipped unless `TEST_DATABASE_URL` points at a **local** server; the helper refuses anything else. They create and drop their own throwaway database:
+**Continuous integration.** [`.github/workflows/tests.yml`](.github/workflows/tests.yml) runs the type-check and the whole suite on every push and pull request, with a Postgres 16 service so the migration tests below run too.
+
+**Migrations against real Postgres** (`tests/db/`: db/001, db/002 and db/003, including concurrent overlapping inserts). Locally they are skipped unless `TEST_DATABASE_URL` points at a **local** server; the helper refuses anything else. They create and drop their own throwaway database:
 
 ```bash
 TEST_DATABASE_URL=postgresql://postgres@localhost:5432/postgres npx vitest run tests/db
@@ -420,7 +427,7 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/postgres npx vitest run t
 
 ## 11. Known limitations
 
-- **Overlap gap.** The unique index only catches two bookings with the *same* start time. Two simultaneous requests for overlapping windows (16:00 and 16:30 for a 150-minute job) can both pass the pre-check. A Postgres exclusion constraint is planned as `db/003`; the repository already maps its error (23P01) to `slot_taken`.
+- **Overlap rules live in two places.** The pre-check (friendly alternatives) and the database constraint (the guarantee) measure windows slightly differently (§4), so a request can occasionally pass the pre-check and still get a 409. Rows with an unparseable slot or date have no window and are not covered, the same as with the unique index.
 - **5-second email wait.** A confirm waits up to 5 s for SMTP. A slower send is recorded as failed and left to the reconciler, so if it was eventually delivered the customer can get the confirmation twice. The same can happen if SMTP succeeds but recording `confirmation_sent_at` fails.
 - **Gmail limits.** Gmail's own sending limits apply (about 500 messages a day for a personal account), and Gmail sends as the authenticated account.
 - **Google Places.** Needs a billing-enabled key; it has no on-time or cancellation history and review dates are not requested, so those stay null.
