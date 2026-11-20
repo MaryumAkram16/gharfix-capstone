@@ -258,9 +258,14 @@ async function reschedule(
   return ok({ ...responseBody, email, ...(originalClosed ? {} : { original_update_pending: true }) });
 }
 
-/** A failed get_slots/confirm: its status and body reach the customer (e.g. 503 retryable, 409 slot taken). */
+/**
+ * A failed get_slots/confirm: its status and body reach the customer.
+ * 5xx becomes 503 (retryable). A 409 (the slot was just taken) is worth
+ * retrying; a 400 or 422 (e.g. the booking's date has already passed) will
+ * fail the same way again, so it is not marked retryable.
+ */
 function passThrough(res: HttpResult<unknown>, log: Logger, step: string): HttpResult<unknown> {
   log.warn('reschedule.booking_step_failed', { step, http_status: res.status });
   if (res.status >= 500) return serviceUnavailable();
-  return { status: res.status, body: { ...(res.body as Record<string, unknown>), workflow: 'WF7-AutoReschedule', retryable: true } };
+  return { status: res.status, body: { ...(res.body as Record<string, unknown>), workflow: 'WF7-AutoReschedule', retryable: res.status === 409 } };
 }

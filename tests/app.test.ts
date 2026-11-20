@@ -55,7 +55,7 @@ const confirm = {
   location: 'DHA Phase 5, Lahore',
   price_pkr: 2500,
   slot: '4:00 PM',
-  booking_date: '2026-11-10',
+  booking_date: '2099-11-10', // far future: these tests use the real clock, and past dates are refused
   user_name: 'Test User',
   user_email: 'booking-test@example.test',
   idempotency_key: 'idem-test-app-0001',
