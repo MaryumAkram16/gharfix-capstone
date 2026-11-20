@@ -11,7 +11,7 @@ import {
   type AlternativeDate, type ServiceBlock,
 } from './schedule.js';
 import { normaliseSlot } from './slot.js';
-import { validateConfirm, validateGetSlots, type ConfirmRequest, type Validated } from './validate.js';
+import { pastDateMessage, validateConfirm, validateGetSlots, type ConfirmRequest, type Validated } from './validate.js';
 
 // khadmat-booking (WF4) without n8n: get_slots and confirm.
 // Everything with side effects comes in through BookingDeps.
@@ -129,6 +129,12 @@ function invalid<T>(v: Validated<T>): HttpResult | null {
   return validationError(f.message, f.fields);
 }
 
+/** 400 validation_error for a date before today in Pakistan, or null. */
+function pastDate(bookingDate: string, now: Date): HttpResult | null {
+  const message = pastDateMessage(bookingDate, pakistanDate(now));
+  return message ? validationError(message, ['booking_date']) : null;
+}
+
 function valid<T>(v: Validated<T>): T {
   return (v as Extract<Validated<T>, { ok: true }>).value;
 }
@@ -138,6 +144,8 @@ async function getSlots(body: unknown, deps: BookingDeps): Promise<HttpResult> {
   const bad = invalid(v);
   if (bad) return bad;
   const req = valid(v);
+  const past = pastDate(req.bookingDate, deps.now());
+  if (past) return past;
 
   const block = serviceBlock(req.serviceType);
   const booked = (await deps.db.bookedSlots(req.providerId, [req.bookingDate])).get(req.bookingDate) ?? [];
@@ -270,6 +278,11 @@ async function confirm(body: unknown, deps: BookingDeps): Promise<HttpResult> {
     const existing = await deps.db.findByIdempotencyKey(key);
     if (existing) return replay(existing, fingerprint, deps, log);
   }
+
+  // After the replay lookup on purpose: a retry of a booking made just before
+  // midnight replays it; a new booking for a past date is refused.
+  const past = pastDate(req.bookingDate, deps.now());
+  if (past) return past;
 
   // Pre-check gives the friendly answer in the common case. The unique index
   // in the database is what actually stops two requests winning the same slot.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SLOTS } from '../../lib/booking/schedule';
-import { isValidDate, validateConfirm, validateGetSlots, type Validated } from '../../lib/booking/validate';
+import { isValidDate, pastDateMessage, validateConfirm, validateGetSlots, type Validated } from '../../lib/booking/validate';
 
 // The project tsconfig is not strict, so `if (result.ok)` does not narrow the union.
 function failure<T>(result: Validated<T>) {
@@ -104,5 +104,14 @@ describe('validateGetSlots', () => {
   it('requires a provider and a date', () => {
     const result = failure(validateGetSlots({}));
     expect(result.message).toBe('Missing fields: provider_id, booking_date');
+  });
+});
+
+describe('pastDateMessage', () => {
+  it('flags only dates before today', () => {
+    expect(pastDateMessage('2026-11-03', '2026-11-04')).toContain('2026-11-03 is in the past');
+    expect(pastDateMessage('2026-11-04', '2026-11-04')).toBeNull();
+    expect(pastDateMessage('2026-11-05', '2026-11-04')).toBeNull();
+    expect(pastDateMessage('2025-12-31', '2026-01-01')).not.toBeNull(); // across a year boundary
   });
 });

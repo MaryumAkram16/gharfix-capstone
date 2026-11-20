@@ -52,6 +52,19 @@ export function isValidDate(value: unknown): value is string {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
 }
 
+/**
+ * Message for a booking date before today's Pakistan date, or null if the date
+ * is today or later. Both are 'YYYY-MM-DD', so they compare as strings.
+ * Kept out of validateConfirm/validateGetSlots (which have no clock): the
+ * handler runs it after the idempotency lookup, so a retry that crosses
+ * midnight still replays the original booking instead of failing.
+ */
+export function pastDateMessage(bookingDate: string, today: string): string | null {
+  return bookingDate < today
+    ? `Invalid fields: booking_date. ${bookingDate} is in the past; the earliest bookable date is today (${today}, Pakistan time).`
+    : null;
+}
+
 function text(value: unknown): string | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   if (typeof value !== 'string') return undefined;

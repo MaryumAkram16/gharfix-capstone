@@ -363,3 +363,56 @@ describe('confirmation_sent_at (db/002)', () => {
     expect(email.sent).toHaveLength(1);
   });
 });
+
+describe('past dates', () => {
+  // NOW is 2026-11-04 14:00 in Karachi.
+  it('confirm refuses a date before today in Pakistan with 400, writing and sending nothing', async () => {
+    const res = await handleBookingRequest({ ...confirmBody, booking_date: '2026-11-03' }, deps);
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ status: 'validation_error', fields: ['booking_date'] });
+    expect(JSON.stringify(res.body)).toContain('2026-11-03 is in the past');
+    expect(db.rows).toHaveLength(0);
+    expect(email.sent).toHaveLength(0);
+  });
+
+  it('get_slots refuses a past date the same way', async () => {
+    const res = await handleBookingRequest({ action: 'get_slots', provider_id: 'p', booking_date: '2026-05-14' }, deps);
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ status: 'validation_error', fields: ['booking_date'] });
+  });
+
+  it('accepts today and later', async () => {
+    expect((await handleBookingRequest({ ...confirmBody, booking_date: '2026-11-04' }, deps)).status).toBe(200);
+    expect((await handleBookingRequest({ action: 'get_slots', provider_id: 'p', booking_date: '2026-11-04' }, deps)).status).toBe(200);
+    expect((await handleBookingRequest({ ...confirmBody, booking_date: '2027-01-01', slot: '09:00' }, deps)).status).toBe(200);
+  });
+
+  it("uses Pakistan's date, not UTC's, around midnight", async () => {
+    // 19:30 UTC on 2026-11-04 is 00:30 on 2026-11-05 in Karachi: the 4th is already past.
+    deps.now = () => new Date('2026-11-04T19:30:00Z');
+    expect((await handleBookingRequest({ ...confirmBody, booking_date: '2026-11-04' }, deps)).status).toBe(400);
+    expect((await handleBookingRequest({ ...confirmBody, booking_date: '2026-11-05' }, deps)).status).toBe(200);
+
+    // 18:59 UTC is 23:59 in Karachi: still the 4th, so the 4th is bookable.
+    deps.now = () => new Date('2026-11-04T18:59:00Z');
+    expect((await handleBookingRequest({ ...confirmBody, booking_date: '2026-11-04', slot: '09:00' }, deps)).status).toBe(200);
+  });
+
+  it('still replays a retry that arrives after midnight, instead of refusing it', async () => {
+    const keyed = { ...confirmBody, booking_date: '2026-11-04', idempotency_key: 'idem-test-midnight' };
+    deps.now = () => new Date('2026-11-04T18:58:00Z'); // 23:58 in Karachi
+    const first = await handleBookingRequest(keyed, deps);
+    deps.now = () => new Date('2026-11-04T19:01:00Z'); // 00:01 the next day
+    const retry = await handleBookingRequest(keyed, deps);
+
+    expect(first.status).toBe(200);
+    expect(retry).toEqual({ status: 200, body: { ...first.body, replayed: true } });
+    expect(db.rows).toHaveLength(1);
+  });
+
+  it('refuses a new booking for a past date even when it carries an idempotency key', async () => {
+    const res = await handleBookingRequest({ ...confirmBody, booking_date: '2026-11-01', idempotency_key: 'idem-test-new-past' }, deps);
+    expect(res.status).toBe(400);
+    expect(db.rows).toHaveLength(0);
+  });
+});

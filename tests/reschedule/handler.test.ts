@@ -166,3 +166,14 @@ describe('checks', () => {
     expect((await send({ alternatives: [ALT] })).status).toBe(503);
   });
 });
+
+describe('booking date already passed', () => {
+  it('a provider cancel of a past booking gets the booking step\'s 400, not marked retryable, and books nothing', async () => {
+    records = new FakeRecords().seed({ booking_id: 'BK-TEST-7', slot: '16:00', booking_date: '2026-11-01', price_pkr: 2000 });
+    deps.records = records;
+    const res = await send({ action: 'provider_cancel', initiator: 'provider', cancellation_reason_by_provider: 'Too late', alternatives: [ALT] });
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ status: 'validation_error', fields: ['booking_date'], workflow: 'WF7-AutoReschedule', retryable: false });
+    expect(bookings.rows).toHaveLength(0);
+  });
+});

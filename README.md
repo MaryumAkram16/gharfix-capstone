@@ -154,10 +154,12 @@ Deployed: the app runs on Vercel at https://gharfix-capstone-bvq8.vercel.app/.
 | HTTP | `status` | Meaning |
 |---|---|---|
 | 200 | `confirmed` | booked (or an idempotent replay: `replayed: true`, `booking_status` = current status) |
-| 400 | `validation_error` | every missing/invalid field listed in one response |
+| 400 | `validation_error` | every missing/invalid field listed in one response, including a `booking_date` before today in Pakistan |
 | 409 | `slot_taken` | taken by the pre-check or by the unique index; includes alternative dates |
 | 422 | `idempotency_key_reused` | same key, different request |
 | 503 | `service_unavailable` | Supabase did not answer (after safe retries) |
+
+**Past dates are refused.** `get_slots` and `confirm` answer 400 `validation_error` (field `booking_date`) for a date before today's Pakistan date; today itself is bookable. The check runs after the idempotency lookup, so a confirm sent at 23:58 and retried at 00:01 still replays the original booking instead of failing. Before this, past dates were accepted: two test bookings for 14 May were created on 16 May and stayed `confirmed`, blocking migration 003 until they were cancelled. A reschedule whose original date has passed gets the same 400 from the booking step, marked not retryable.
 
 **How double booking is prevented**
 
